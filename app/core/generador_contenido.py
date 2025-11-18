@@ -29,7 +29,7 @@ class GeneradorContenido:
         if not target_networks:
             raise ValueError("Debes especificar al menos una red social")
         
-        logger.info(f"Generando contenido para: {', '.join(target_networks)}")
+        logger.info(f" Generando contenido para: {', '.join(target_networks)}")
         
         mensaje_usuario = f"""Contenido: {contenido}
 Redes sociales: {', '.join(target_networks)}
@@ -45,7 +45,8 @@ Genera contenido optimizado para cada red social solicitada."""
                 ],
                 response_format={"type": "json_object"},
                 temperature=0.7,
-                max_tokens=3000
+                max_tokens=3000,
+                timeout=30
             )
             
             contenido_generado = json.loads(respuesta.choices[0].message.content)
@@ -58,13 +59,16 @@ Genera contenido optimizado para cada red social solicitada."""
                         ai_model_used=self.modelo_ia,
                         results=contenido_generado
                     )
+                    logger.info(" Contenido guardado en DB")
                 except Exception as e:
-                    print(f" No se pudo guardar en DB: {e}")
+                    logger.warning(f" No se pudo guardar en DB: {e}")
             
-            print(" Generación completada")
+            logger.info(" Generación completada exitosamente")
             return contenido_generado
             
         except json.JSONDecodeError as e:
+            logger.error(f" Error al parsear JSON: {str(e)}")
             raise ValueError(f"Error al parsear JSON: {str(e)}")
         except Exception as e:
+            logger.error(f" Error al generar contenido: {str(e)}")
             raise ValueError(f"Error al generar contenido: {str(e)}")
