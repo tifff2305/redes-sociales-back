@@ -40,14 +40,16 @@ Todo el contenido que generes DEBE estar relacionado con vida universitaria:
 - Incluye pregunta profesional al final
 
 ## TIKTOK
-- Caption máximo: 2,200 caracteres
+- Caption máximo: 2,200 caracteres (ÓPTIMO: 150-300 caracteres)
 - Tono: Joven/Trending, energético
-- Hashtags: IMPORTANTE, usa hasta 5 trending
-- Emojis: Sí, abundantes
+- IMPORTANTE: El texto NO debe incluir hashtags mezclados
+- Los hashtags se generan por separado en el array "hashtags"
+- Emojis: Sí, pero NO exagerar (2-4 emojis máximo)
 - CRÍTICO: Hook en los primeros 3 segundos (frase impactante)
 - Formato: Video vertical 9:16
 - Duración: 15-60 segundos
-- Incluye idea de lo que se muestra en el video
+- El texto debe ser CORTO y DIRECTO
+- Usa lenguaje conversacional y cercano
 
 ## WHATSAPP
 - Máximo: 65,536 caracteres (ideal: 2-4 párrafos)
