@@ -3,7 +3,7 @@ import os
 import base64
 import hashlib
 import logging
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, List
 from fastapi import UploadFile
 
 from app.config.configuracion import obtener_configuracion
@@ -37,6 +37,7 @@ class TikTok:
         verifier = generar_code_verifier()
         challenge = generar_code_challenge(verifier)
         
+        # Permisos necesarios para subir videos
         scopes = "video.upload,video.publish,user.info.basic"
         
         url = f"{self.auth_url}?"
@@ -78,8 +79,6 @@ class TikTok:
         
         data = response.json()
         
-        logger.info("Token de TikTok obtenido exitosamente")
-        
         return {
             "access_token": data.get("access_token"),
             "refresh_token": data.get("refresh_token"),
@@ -92,46 +91,46 @@ class TikTok:
     def publicar_video(
         self,
         texto: str,
-        video: Any,
+        video: Any, # UploadFile o wrapper
         access_token: str,
-        hashtags: list = None,
+        hashtags: List[str] = None,
         privacy_level: str = "SELF_ONLY"
     ) -> Dict[str, Any]:
  
-        # Validar video
+        # 1. Validar video
         if hasattr(video, 'content_type') and video.content_type != "video/mp4":
             raise ValueError("Solo se permiten archivos MP4")
         
-        # Preparar texto con hashtags
+        # 2. LOGICA CRÍTICA DE HASHTAGS
+        # Aquí es donde combinamos el texto original con los hashtags
         hashtags = hashtags or []
-        hashtags_limitados = hashtags[:4]
         texto_completo = texto
         
-        if hashtags_limitados:
+        if hashtags:
+            # Tomamos los hashtags, aseguramos que tengan #, y los unimos
             hashtags_str = " ".join(
-                f"#{h}" if not h.startswith("#") else h 
-                for h in hashtags_limitados
+                f"#{h.replace('#', '')}" for h in hashtags
             )
+            # Los agregamos al final del texto con saltos de línea
             texto_completo = f"{texto}\n\n{hashtags_str}"
-        
-        # Limitar texto
+            
+        # TikTok tiene límite de caracteres (aprox 2200), cortamos si es necesario
         texto_completo = texto_completo[:2200]
         
-        # Obtener tamaño del video
+        # 3. Obtener tamaño del video
         if hasattr(video, 'size'): 
             video_size = video.size
         else:
-            # Si es UploadFile original de FastAPI
             video.file.seek(0, 2)
             video_size = video.file.tell()
             video.file.seek(0)
-            
-        logger.info(f"Iniciando publicación en TikTok. Tamaño video: {video_size} bytes")
+        
+        logger.info(f"Publicando en TikTok. Texto final: {texto_completo[:50]}... (Hashtags: {len(hashtags)})")
         
         # PASO 1: Inicializar carga
+        # NOTA: Pasamos 'texto_completo' como descripción
         init_data = self._inicializar_carga(
-            texto=texto,
-            texto_completo=texto_completo,
+            description=texto_completo,
             privacy_level=privacy_level,
             video_size=video_size,
             access_token=access_token
@@ -146,20 +145,18 @@ class TikTok:
         if not exito:
             raise Exception("Error al subir video a TikTok")
         
-        # PASO 3: Completado (TikTok procesa automáticamente)
-        logger.info(f"Publicación exitosa. Publish ID: {publish_id}")
-        
+        # PASO 3: Completado
         return {
             "success": True,
             "publish_id": publish_id,
             "message": "Video cargado exitosamente. TikTok está procesando la publicación.",
-            "red_social": "tiktok"
+            "red_social": "tiktok",
+            "texto_enviado": texto_completo # Para debug
         }
     
     def _inicializar_carga(
         self,
-        texto: str,
-        texto_completo: str,
+        description: str, # Recibimos la descripción completa
         privacy_level: str,
         video_size: int,
         access_token: str
@@ -169,9 +166,9 @@ class TikTok:
         
         payload = {
             "post_info": {
-                "title": texto[:150] or "Publicación automática",
+                "title": description[:2200], # Título opcional
                 "privacy_level": privacy_level,
-                "description": texto_completo
+                "description": description # <--- ESTO ES LO QUE SALE EN EL CAPTION
             },
             "source_info": {
                 "source": "FILE_UPLOAD",
@@ -199,8 +196,6 @@ class TikTok:
         if not data.get("upload_url") or not data.get("publish_id"):
             raise Exception("TikTok no proporcionó upload_url o publish_id")
         
-        logger.info("Paso 1/3 completado. Upload URL obtenida")
-        
         return {
             "upload_url": data["upload_url"],
             "publish_id": data["publish_id"]
@@ -214,7 +209,10 @@ class TikTok:
     ) -> bool:
         """Paso 2: Sube archivo de video"""
         try:
+            # Resetear puntero
             video.file.seek(0)
+            
+            # Leer contenido
             video_content = video.file.read()
             
             headers = {

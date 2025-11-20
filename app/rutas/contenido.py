@@ -79,6 +79,7 @@ async def generar_contenido(request: SolicitudContenido):
 @router.post("/publicar")
 async def tiktok_publicar(
     text: str = Form(...),
+    hashtags: str = Form(None),
     archivo: UploadFile = File(...)
 ):
     current_user_id = "api-user"
@@ -107,17 +108,23 @@ async def tiktok_publicar(
 
         if archivo.content_type != "video/mp4":
             raise HTTPException(status_code=400, detail="Solo MP4")
+        
+        lista_hashtags = []
+        if hashtags:
+            # Limpiamos por si el usuario pega "[#tag1, #tag2]" directamente
+            limpio = hashtags.replace("[", "").replace("]", "").replace('"', "").replace("'", "")
+            # Separamos por comas
+            lista_hashtags = [h.strip() for h in limpio.split(",") if h.strip()]
 
         # 3. Publicar
         publicador = PublicadorTikTok()
-        
         await archivo.seek(0)
-        
         token_data = GestorTokens.obtener_token(current_user_id, "tiktok")
         
         resultado = publicador.publicar_video(
             texto=text,
-            video=archivo, # Pasamos el UploadFile directamente
+            video=archivo,
+            hashtags=lista_hashtags,
             access_token=token_data["access_token"]
         )
 
