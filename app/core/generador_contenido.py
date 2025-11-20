@@ -1,8 +1,8 @@
-import json
+"""import json
 import logging
 from openai import OpenAI
 from typing import Dict, Any, List
-from app.core.prompt import obtener_prompt
+from app.utilidades.prompt import obtener_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +51,9 @@ Genera contenido optimizado para cada red social solicitada."""
             
             contenido_generado = json.loads(respuesta.choices[0].message.content)
             
+            # Log para verificar el contenido generado antes de enviarlo
+            logger.debug(f"Contenido generado: {json.dumps(contenido_generado, ensure_ascii=False, indent=2)}")
+            
             if self.modelo_db:
                 try:
                     self.modelo_db.guardar_generacion(
@@ -71,4 +74,4 @@ Genera contenido optimizado para cada red social solicitada."""
             raise ValueError(f"Error al parsear JSON: {str(e)}")
         except Exception as e:
             logger.error(f" Error al generar contenido: {str(e)}")
-            raise ValueError(f"Error al generar contenido: {str(e)}")
+            raise ValueError(f"Error al generar contenido: {str(e)}")"""

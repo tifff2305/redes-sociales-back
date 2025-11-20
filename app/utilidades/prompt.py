@@ -93,7 +93,7 @@ EJEMPLO si solicitan LinkedIn:
 EJEMPLO si solicitan TikTok:
 {
   "tiktok": {
-    "text": "¿Cansado de hacer filas para trámites? 😮💨 Te enseño el hack definitivo ⚡️ #Universidad #Bolivia #Estudiantes #TrámitesFáciles #VidaUniversitaria",
+    "text": "¿Cansado de hacer filas para trámites? 😮💨 Te enseño el hack definitivo ⚡️",
     "hashtags": ["#Universidad", "#Bolivia", "#Estudiantes", "#TrámitesFáciles", "#VidaUniversitaria"],
     "character_count": 156,
     "video_hook": "POV: Ya no haces filas para trámites 🤯"

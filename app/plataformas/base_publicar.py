@@ -1,4 +1,4 @@
-from abc import ABC, abstractmethod
+"""from abc import ABC, abstractmethod
 from typing import Dict, Any
 
 
@@ -17,4 +17,4 @@ class PublicadorBase(ABC):
     
     @abstractmethod
     def intercambiar_codigo_por_token(self, code: str, redirect_uri: str) -> Dict[str, Any]:
-        pass
+        pass"""

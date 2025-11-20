@@ -1,4 +1,4 @@
-from typing import Dict, Any, List
+"""from typing import Dict, Any, List
 from datetime import datetime
 import logging
 
@@ -26,4 +26,4 @@ class GeneracionContenido:
         logger.info(f" Simulación DB: Registro #{registro['id']} Guardado")
         logger.info(f"   Contenidos generados: {', '.join(results.keys())}")
 
-        return registro
+        return registro"""

@@ -1,7 +1,7 @@
-import requests
+"""import requests
 from typing import Dict, Any
-from app.core.servicios.base_publicar import PublicadorBase
 import os
+from app.plataformas.base_publicar import PublicadorBase
 
 class PublicadorFacebook(PublicadorBase):
     
@@ -72,4 +72,4 @@ class PublicadorFacebook(PublicadorBase):
             "success": True,
             "post_id": data.get("id"),
             "message": "Publicado en Facebook exitosamente"
-        }
+        }"""

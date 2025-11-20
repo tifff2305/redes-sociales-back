@@ -1,6 +1,6 @@
 import requests
 from typing import Dict, Any
-from app.core.servicios.base_publicar import PublicadorBase
+from app.plataformas.base_publicar import PublicadorBase
 import os
 import base64
 import hashlib
@@ -85,23 +85,43 @@ class PublicadorTikTok(PublicadorBase):
     
     def publicar(self, contenido: Dict[str, Any], access_token: str) -> Dict[str, Any]:
         
+        # Separar texto y hashtags
         texto = contenido.get("text", "")
+        hashtags = contenido.get("hashtags", [])
+
+        # Validar texto y hashtags
+        if not texto:
+            raise ValueError("El texto es obligatorio para publicar en TikTok.")
+        if not isinstance(hashtags, list):
+            raise ValueError("Los hashtags deben ser una lista.")
+
+        # Limitar el texto a 2200 caracteres
+        texto = texto[:2200]
+
+        # Limitar los hashtags a un máximo de 4
+        hashtags = hashtags[:4]
+
+        # Definir las variables faltantes
+        privacy_level = contenido.get("privacy_level", "SELF_ONLY")
         video_file: UploadFile = contenido.get("video_file")
         video_size: int = contenido.get("video_size")
-        
+        init_url = "https://open.tiktokapis.com/v2/post/publish/video/init/"
+
+        # Validar que las variables estén presentes
         if not video_file:
             raise ValueError("TikTok requiere el archivo de video (video_file) para publicar.")
         if not video_size:
             raise ValueError("TikTok requiere el tamaño del video (video_size) para iniciar la carga.")
-        
-        # 1. INICIAR LA CARGA (Obtener la URL de carga)
-        init_url = "https://open.tiktokapis.com/v2/post/publish/video/init/"
-        privacy_level = contenido.get("privacy_level", "SELF_ONLY")
-        
+
+        # Concatenar hashtags al texto sin incluirlos en la limitación de caracteres
+        texto_con_hashtags = texto + " " + " ".join(hashtags)
+
+        # Construir el payload con texto y hashtags concatenados
         init_payload = {
             "post_info": {
-                "title": texto[:150] or "Publicación automática",
+                "title": texto[:150] or "Publicación automática",  # Solo el texto para el título
                 "privacy_level": privacy_level,
+                "description": texto_con_hashtags  # Texto con hashtags concatenados
             },
             "source_info": { 
                 "source": "FILE_UPLOAD",
