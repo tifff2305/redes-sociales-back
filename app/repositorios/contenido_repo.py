@@ -1,4 +1,4 @@
-import logging
+"""import logging
 from typing import Dict, Any, Optional
 from sqlalchemy.orm import Session
 
@@ -61,4 +61,4 @@ class RepositorioContenido:
             .filter(GeneracionContenido.user_id == user_id)\
             .order_by(GeneracionContenido.created_at.desc())\
             .limit(limit)\
-            .all()
+            .all()"""

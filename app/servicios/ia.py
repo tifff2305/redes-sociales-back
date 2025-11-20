@@ -31,7 +31,7 @@ class ServicioIA:
         self.cache_contenido: Dict[str, Dict[str, Any]] = {}
         self._inicializado = True
         
-        logger.info(f"✅ Servicio IA inicializado")
+        logger.info(f" Servicio IA inicializado")
     
     def generar_contenido_completo(
         self,
@@ -49,7 +49,7 @@ class ServicioIA:
         if not target_networks:
             raise ValueError("Especifica al menos una red social")
         
-        logger.info(f"🚀 Generando contenido para: {', '.join(target_networks)}")
+        logger.info(f" Generando contenido para: {', '.join(target_networks)}")
         
         # PASO 1: Generar texto, hashtags y prompts
         contenido_texto = self._generar_texto(contenido, target_networks)
@@ -68,32 +68,32 @@ class ServicioIA:
                 prompt_imagen = data_red.get("suggested_image_prompt")
                 if prompt_imagen:
                     try:
-                        logger.info(f"🎨 Generando imagen para Instagram...")
+                        logger.info(f" Generando imagen para Instagram...")
                         imagen_data = self.generar_imagen(prompt_imagen)
                         data_red["imagen_b64"] = imagen_data["b64_json"]
-                        logger.info("✅ Imagen generada")
+                        logger.info(" Imagen generada")
                     except Exception as e:
-                        logger.error(f"❌ Error generando imagen: {str(e)}")
+                        logger.error(f" Error generando imagen: {str(e)}")
             
             # Generar video para TikTok
             if red == "tiktok":
                 video_hook = data_red.get("video_hook")
                 if video_hook:
                     try:
-                        logger.info(f"🎥 Generando video para TikTok...")
+                        logger.info(f" Generando video para TikTok...")
                         video_path = f"outputs/{user_id}_tiktok_video.mp4"
                         self.generar_video(video_hook, duracion=4, ruta_salida=video_path)
                         data_red["video_path"] = video_path
-                        logger.info("✅ Video generado")
+                        logger.info(" Video generado")
                     except Exception as e:
-                        logger.error(f"❌ Error generando video: {str(e)}")
+                        logger.error(f" Error generando video: {str(e)}")
             
             resultado_final[red] = data_red
         
         # Guardar en caché
         self.cache_contenido[user_id] = resultado_final
         
-        logger.info(f"✅ Contenido completo generado y guardado en caché")
+        logger.info(f" Contenido completo generado y guardado en caché")
         
         return resultado_final
     
@@ -126,10 +126,10 @@ Genera contenido optimizado para cada red social solicitada."""
             return contenido_generado
             
         except json.JSONDecodeError as e:
-            logger.error(f"❌ Error al parsear JSON: {str(e)}")
+            logger.error(f" Error al parsear JSON: {str(e)}")
             raise ValueError(f"Error al parsear respuesta de IA: {str(e)}")
         except Exception as e:
-            logger.error(f"❌ Error al generar contenido: {str(e)}")
+            logger.error(f" Error al generar contenido: {str(e)}")
             raise ValueError(f"Error al generar contenido: {str(e)}")
     
     def generar_imagen(
@@ -172,23 +172,23 @@ Genera contenido optimizado para cada red social solicitada."""
         try:
             os.makedirs(os.path.dirname(ruta_salida), exist_ok=True)
             
-            logger.info(f"🎥 Iniciando generación de video (Sora)...")
+            logger.info(f" Iniciando generación de video (Sora)...")
 
             # 1. Crear el trabajo (Recuerda: seconds debe ser STRING)
             video = self.client.videos.create(
                 model=self.modelo_video, 
                 prompt=texto,
-                seconds=str(duracion) # <--- El arreglo del error 400 anterior
+                seconds=str(duracion)
             )
             
-            logger.info(f"🆔 Trabajo creado: {video.id}")
+            logger.info(f" Trabajo creado: {video.id}")
             
             # 2. Loop de espera
             while video.status in ["in_progress", "queued"]:
                 video = self.client.videos.retrieve(video.id)
                 progreso = getattr(video, 'progress', 0) or 0
 
-                estado_icon = "⏳" if video.status == "queued" else "🔄"
+                estado_icon = "" if video.status == "queued" else ""
                 logger.info(f"{estado_icon} [Sora] Estado: {video.status.upper()} | Progreso: {progreso}%")
                 
                 time.sleep(4)
@@ -208,10 +208,10 @@ Genera contenido optimizado para cada red social solicitada."""
                 raise ValueError(f"Generación fallida: {error_msg}")
 
             # 3. INTENTOS DE DESCARGA (La parte crítica)
-            logger.info("⬇️ Intentando descargar video...")
+            logger.info("⬇ Intentando descargar video...")
             content_bytes = None
 
-            # ESTRATEGIA A: Método download_content (Similar a Node.js)
+            # ESTRATEGIA A: Método download_content 
             if hasattr(self.client.videos, 'download_content'):
                 logger.info("   > Usando método download_content...")
                 response = self.client.videos.download_content(video.id)
@@ -234,20 +234,20 @@ Genera contenido optimizado para cada red social solicitada."""
             
             else:
                 # Si todo falla, imprimimos ayuda para depurar
-                logger.error(f"❌ No se encontró método de descarga. Métodos disponibles: {dir(self.client.videos)}")
+                logger.error(f" No se encontró método de descarga. Métodos disponibles: {dir(self.client.videos)}")
                 raise ValueError("La librería no tiene un método conocido para descargar el video.")
 
             # 4. Guardar en disco
             if content_bytes:
                 with open(ruta_salida, "wb") as archivo:
                     archivo.write(content_bytes)
-                logger.info(f"✅ Video guardado exitosamente: {ruta_salida}")
+                logger.info(f" Video guardado exitosamente: {ruta_salida}")
                 return ruta_salida
             else:
                 raise ValueError("No se pudieron obtener los bytes del video.")
             
         except Exception as e:
-            logger.error(f"❌ Error generando video: {str(e)}")
+            logger.error(f" Error generando video: {str(e)}")
             # IMPORTANTE: Devolvemos string vacío para que no rompa todo el flujo del endpoint
             # y al menos te llegue el texto generado.
             return ""

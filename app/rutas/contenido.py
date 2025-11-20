@@ -1,8 +1,9 @@
 from fastapi import APIRouter, HTTPException, Form, File, UploadFile
 from pydantic import BaseModel, Field
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 import logging
 
+from app.plataformas.whatsapp import WhatsApp
 from app.servicios.ia import ServicioIA
 from app.repositorios.tokens import GestorTokens
 from app.plataformas.tiktok import TikTok as PublicadorTikTok
@@ -15,6 +16,7 @@ servicio_ia = ServicioIA()
 class SolicitudContenido(BaseModel):
     contenido: str = Field(..., min_length=10)
     redes: List[str]
+    telefono_destino: Optional[str] = None
 
 
 @router.post("/generar", response_model=Dict[str, Any])
@@ -57,12 +59,18 @@ async def generar_contenido(request: SolicitudContenido):
                         "archivo_path": video_path,
                     }
             
-            elif red == "instagram":
-                if "imagen_b64" in datos_raw:
-                    media_info = {
-                        "tipo": "imagen",
-                        "data": "imagen_generada_en_base64"
-                    }
+            elif red == "whatsapp":
+                if not request.telefono_destino:
+                    respuesta_final[red] = "Error: Falta teléfono de destino."
+                    continue
+                
+                # WhatsApp requiere: Plantilla + Texto en variable {{1}}
+                cliente_wa = WhatsApp()
+                resp = cliente_wa.enviar_contenido_generado(
+                    numero_destino=request.telefono_destino,
+                    texto_ia=datos_raw["text"]
+                )
+                respuesta_final[red] = f"Enviado (ID: {resp.get('messages', [{}])[0].get('id')})"
 
             if media_info:
                 nodo_red["media_info"] = media_info

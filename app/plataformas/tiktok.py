@@ -37,7 +37,7 @@ class TikTok:
         verifier = generar_code_verifier()
         challenge = generar_code_challenge(verifier)
         
-        # Permisos necesarios para subir videos
+        # Permisos necesarios
         scopes = "video.upload,video.publish,user.info.basic"
         
         url = f"{self.auth_url}?"
@@ -72,11 +72,10 @@ class TikTok:
         
         response = requests.post(self.token_url, data=payload)
         
+        # Debug por si falla el token
         if response.status_code != 200:
-            error_body = response.json() if response.content else response.text
-            logger.error(f"Error obteniendo token de TikTok: {response.status_code}")
-            raise Exception(f"Error obteniendo token de TikTok: {error_body}")
-        
+            logger.error(f"Error TikTok Token: {response.text}")
+            
         data = response.json()
         
         return {
@@ -91,31 +90,27 @@ class TikTok:
     def publicar_video(
         self,
         texto: str,
-        video: Any, # UploadFile o wrapper
+        video: Any, 
         access_token: str,
         hashtags: List[str] = None,
         privacy_level: str = "SELF_ONLY"
     ) -> Dict[str, Any]:
  
-        # 1. Validar video
+        # 1. Validar tipo de archivo
         if hasattr(video, 'content_type') and video.content_type != "video/mp4":
             raise ValueError("Solo se permiten archivos MP4")
         
-        # 2. LOGICA CRÍTICA DE HASHTAGS
-        # Aquí es donde combinamos el texto original con los hashtags
+        # 2. LOGICA DE HASHTAGS (Unir texto + hashtags)
         hashtags = hashtags or []
         texto_completo = texto
         
         if hashtags:
-            # Tomamos los hashtags, aseguramos que tengan #, y los unimos
+            # Formateamos hashtags (#Tag) y los unimos
             hashtags_str = " ".join(
                 f"#{h.replace('#', '')}" for h in hashtags
             )
-            # Los agregamos al final del texto con saltos de línea
+            # Los pegamos al final del texto
             texto_completo = f"{texto}\n\n{hashtags_str}"
-            
-        # TikTok tiene límite de caracteres (aprox 2200), cortamos si es necesario
-        texto_completo = texto_completo[:2200]
         
         # 3. Obtener tamaño del video
         if hasattr(video, 'size'): 
@@ -125,12 +120,11 @@ class TikTok:
             video_size = video.file.tell()
             video.file.seek(0)
         
-        logger.info(f"Publicando en TikTok. Texto final: {texto_completo[:50]}... (Hashtags: {len(hashtags)})")
+        logger.info(f"Publicando en TikTok. Longitud texto: {len(texto_completo)}")
         
         # PASO 1: Inicializar carga
-        # NOTA: Pasamos 'texto_completo' como descripción
         init_data = self._inicializar_carga(
-            description=texto_completo,
+            description=texto_completo, # Pasamos el texto YA CONCATENADO
             privacy_level=privacy_level,
             video_size=video_size,
             access_token=access_token
@@ -149,14 +143,14 @@ class TikTok:
         return {
             "success": True,
             "publish_id": publish_id,
-            "message": "Video cargado exitosamente. TikTok está procesando la publicación.",
+            "message": "Video cargado exitosamente. TikTok está procesando.",
             "red_social": "tiktok",
-            "texto_enviado": texto_completo # Para debug
+            "texto_publicado": texto_completo
         }
     
     def _inicializar_carga(
         self,
-        description: str, # Recibimos la descripción completa
+        description: str, 
         privacy_level: str,
         video_size: int,
         access_token: str
@@ -164,11 +158,15 @@ class TikTok:
         """Paso 1: Inicializa carga de video"""
         url = f"{self.api_base}/post/publish/video/init/"
         
+        # --- CORRECCIÓN AQUÍ: Aumentamos el límite a 2200 caracteres ---
+        # Si cortamos a 150, perdemos los hashtags que van al final.
+        titulo_completo = description[:2200] 
+        
         payload = {
             "post_info": {
-                "title": description[:2200], # Título opcional
+                "title": titulo_completo, 
                 "privacy_level": privacy_level,
-                "description": description # <--- ESTO ES LO QUE SALE EN EL CAPTION
+                "description": titulo_completo
             },
             "source_info": {
                 "source": "FILE_UPLOAD",
@@ -183,13 +181,12 @@ class TikTok:
             "Content-Type": "application/json"
         }
         
-        logger.info("Paso 1/3: Inicializando carga en TikTok")
-        
         response = requests.post(url, json=payload, headers=headers)
         
         if response.status_code != 200:
-            logger.error(f"Error en inicialización: {response.text}")
-            raise Exception(f"Error inicializando carga en TikTok: {response.text}")
+            error_detail = response.text
+            logger.error(f"Error inicializando carga: {error_detail}")
+            raise Exception(f"Error inicializando carga en TikTok: {error_detail}")
         
         data = response.json().get("data", {})
         
@@ -209,10 +206,7 @@ class TikTok:
     ) -> bool:
         """Paso 2: Sube archivo de video"""
         try:
-            # Resetear puntero
             video.file.seek(0)
-            
-            # Leer contenido
             video_content = video.file.read()
             
             headers = {
@@ -221,15 +215,12 @@ class TikTok:
                 "Content-Range": f"bytes 0-{video_size - 1}/{video_size}"
             }
             
-            logger.info(f"Paso 2/3: Subiendo video ({video_size} bytes)")
-            
             response = requests.put(upload_url, headers=headers, data=video_content)
             
             if response.status_code not in [200, 201]:
                 logger.error(f"Error subiendo video: {response.text}")
                 return False
             
-            logger.info("Paso 2/3 completado. Video subido exitosamente")
             return True
             
         except Exception as e:

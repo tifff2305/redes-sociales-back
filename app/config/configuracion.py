@@ -4,7 +4,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-
 class Configuracion:
     
     # OpenAI
@@ -29,6 +28,11 @@ class Configuracion:
     # Instagram (usa mismas credenciales de Facebook)
     INSTAGRAM_APP_ID: str = os.getenv("INSTAGRAM_APP_ID", os.getenv("FACEBOOK_APP_ID"))
     INSTAGRAM_APP_SECRET: str = os.getenv("INSTAGRAM_APP_SECRET", os.getenv("FACEBOOK_APP_SECRET"))
+
+    # WhatsApp
+    WHATSAPP_TOKEN: str = os.getenv("WHATSAPP_TOKEN")
+    WHATSAPP_PHONE_ID: str = os.getenv("WHATSAPP_PHONE_ID")
+    WHATSAPP_VERSION: str = os.getenv("WHATSAPP_VERSION", "v22.0")
     
     def validar(self):
         if not self.OPENAI_API_KEY:
