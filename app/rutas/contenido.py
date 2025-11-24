@@ -6,6 +6,7 @@ import os
 import shutil
 
 # Importamos tus servicios
+from app.plataformas.instagram import Instagram
 from app.plataformas.whatsapp import WhatsApp
 from app.servicios.ia import ServicioIA
 from app.repositorios.tokens import GestorTokens
@@ -140,6 +141,24 @@ async def publicar_contenido(
             fb_service = Facebook()
             post_id = fb_service.publicar_foto(archivo_binario=contenido_imagen, mensaje=texto_final)
             return {"estado": "publicado", "success": True, "post_id": post_id, "red": "facebook"}
+        
+        # ================= INSTAGRAM =================
+        elif red_social == "instagram":
+            # 1. Leemos el archivo en memoria (igual que FB)
+            await archivo.seek(0)
+            contenido_imagen = await archivo.read()
+            
+            # 2. Instanciamos el servicio y publicamos
+            # Asegúrate de importar: from app.plataformas.instagram import Instagram
+            ig_service = Instagram()
+            post_id = ig_service.publicar_foto(archivo_binario=contenido_imagen, mensaje=texto_final)
+            
+            return {
+                "estado": "publicado", 
+                "success": True, 
+                "post_id": post_id, 
+                "red": "instagram"
+            }
 
         # ================= LINKEDIN (NUEVO) =================
         elif red_social == "linkedin":

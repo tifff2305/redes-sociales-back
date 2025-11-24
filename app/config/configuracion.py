@@ -25,8 +25,8 @@ class Configuracion:
     FACEBOOK_PAGE_ACCESS_TOKEN: str = os.getenv("FACEBOOK_PAGE_ACCESS_TOKEN")
     
     # Instagram (usa mismas credenciales de Facebook)
-    INSTAGRAM_APP_ID: str = os.getenv("INSTAGRAM_APP_ID", os.getenv("FACEBOOK_APP_ID"))
-    INSTAGRAM_APP_SECRET: str = os.getenv("INSTAGRAM_APP_SECRET", os.getenv("FACEBOOK_APP_SECRET"))
+    INSTAGRAM_APP_ID: str = os.getenv("INSTAGRAM_APP_ID")
+    INSTAGRAM_PAGE_ACCESS_TOKEN: str = os.getenv("INSTAGRAM_PAGE_ACCESS_TOKEN")
 
     # LinkedIn
     ZAPIER_LINKEDIN_WEBHOOK: str = os.getenv("ZAPIER_LINKEDIN_WEBHOOK")
