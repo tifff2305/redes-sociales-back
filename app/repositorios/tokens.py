@@ -1,5 +1,5 @@
 from typing import Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 
 logger = logging.getLogger(__name__)
@@ -41,33 +41,44 @@ class GestorTokens:
         red_social: str,
         access_token: str,
         refresh_token: Optional[str] = None,
-        expires_in: Optional[int] = None,
+        expires_in: Optional[int] = None, # Segundos que dura (ej. 86400)
         metadata: Optional[Dict[str, Any]] = None
     ) -> Dict[str, Any]:
         
         clave = f"{user_id}:{red_social}"
         
+        # MEJORA: Calculamos la fecha exacta de vencimiento
+        expires_at = None
+        if expires_in:
+            # Fecha actual + segundos de vida
+            expires_at = (datetime.now() + timedelta(seconds=expires_in)).isoformat()
+
+        # Si ya existía un token previo, intentamos mantener el refresh_token anterior
+        # si es que el nuevo no trae uno (a veces las APIs no devuelven refresh token nuevo en cada llamada)
+        token_previo = cls.tokens_almacenados.get(clave, {})
+        nuevo_refresh = refresh_token if refresh_token else token_previo.get("refresh_token")
+
         token_data = {
             "user_id": user_id,
             "red_social": red_social,
             "access_token": access_token,
-            "refresh_token": refresh_token,
+            "refresh_token": nuevo_refresh, 
             "expires_in": expires_in,
-            "created_at": datetime.now().isoformat(),
+            "expires_at": expires_at, # Guardamos fecha exacta
+            "updated_at": datetime.now().isoformat(),
             "metadata": metadata or {}
         }
         
         cls.tokens_almacenados[clave] = token_data
         
-        logger.info(f" TOKEN GUARDADO: {user_id} - {red_social}")
-        logger.info(f"   Access Token: {access_token[:20]}...")
+        logger.info(f" TOKEN GUARDADO/ACTUALIZADO: {user_id} - {red_social}")
         return token_data
 
     @classmethod
     def obtener_token(cls, user_id: str, red_social: str) -> Optional[Dict[str, Any]]:
         clave = f"{user_id}:{red_social}"
         return cls.tokens_almacenados.get(clave)
-
+        
     @classmethod
     def eliminar_token(cls, user_id: str, red_social: str) -> bool:
         clave = f"{user_id}:{red_social}"

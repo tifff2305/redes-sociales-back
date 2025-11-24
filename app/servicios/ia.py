@@ -3,6 +3,9 @@ import logging
 from openai import OpenAI
 from typing import Dict, Any, List
 from functools import lru_cache
+import os
+import base64
+import time
 
 from app.config.configuracion import obtener_configuracion
 from app.utilidades.prompt import obtener_prompt
@@ -57,23 +60,41 @@ class ServicioIA:
         # PASO 2: Generar recursos visuales según la red
         resultado_final = {}
         
+        # Crear carpeta outputs si no existe
+        os.makedirs("outputs", exist_ok=True)
+
         for red in target_networks:
             if red not in contenido_texto:
                 continue
             
             data_red = contenido_texto[red].copy()
             
-            # Generar imagen para Instagram
-            if red == "instagram":
+            # === MODIFICACIÓN PARA FACEBOOK E INSTAGRAM ===
+            if red in ["facebook", "instagram"]:
                 prompt_imagen = data_red.get("suggested_image_prompt")
+                
                 if prompt_imagen:
                     try:
-                        logger.info(f" Generando imagen para Instagram...")
+                        logger.info(f"🎨 Generando imagen para {red}...")
+                        
+                        # 1. Generar con IA
                         imagen_data = self.generar_imagen(prompt_imagen)
-                        data_red["imagen_b64"] = imagen_data["b64_json"]
-                        logger.info(" Imagen generada")
+                        
+                        # 2. Guardar en disco (Igual que TikTok)
+                        timestamp = int(time.time())
+                        nombre_archivo = f"{user_id}_{red}_{timestamp}.png"
+                        ruta_archivo = os.path.join("outputs", nombre_archivo)
+                        
+                        # Decodificar y escribir
+                        with open(ruta_archivo, "wb") as f:
+                            f.write(base64.b64decode(imagen_data["b64_json"]))
+                            
+                        # 3. Añadir la ruta a la respuesta
+                        data_red["image_path"] = ruta_archivo
+                        logger.info(f"✅ Imagen guardada en: {ruta_archivo}")
+                        
                     except Exception as e:
-                        logger.error(f" Error generando imagen: {str(e)}")
+                        logger.error(f"❌ Error generando imagen: {str(e)}")
             
             # Generar video para TikTok
             if red == "tiktok":
@@ -135,23 +156,33 @@ Genera contenido optimizado para cada red social solicitada."""
     def generar_imagen(
         self,
         prompt: str,
-        size: str = "1024x1024"
+        size: str = "1024x1024",
+        quality: str = "standard"  # 'standard' o 'hd' (gpt-image-1 soporta hd)
     ) -> Dict[str, Any]:
         
         try:
+            logger.info(f" Generando imagen con modelo: {self.modelo_imagen} | Calidad: {quality}")
+            
+            # Llamada a la API
             respuesta = self.client.images.generate(
-                model=self.modelo_imagen,
+                model=self.modelo_imagen,  # Usará 'gpt-image-1' desde tu config
                 prompt=prompt,
                 size=size,
+                quality=quality, 
+                n=1,
                 response_format="b64_json"
             )
             
+            # Estructuramos la respuesta
             resultado = {
                 "b64_json": respuesta.data[0].b64_json,
                 "prompt_usado": prompt,
-                "size": size
+                "size": size,
+                "quality": quality,
+                "revised_prompt": getattr(respuesta.data[0], 'revised_prompt', prompt) # gpt-image-1 suele optimizar el prompt, es útil guardarlo
             }
             
+            logger.info(" Imagen generada correctamente")
             return resultado
             
         except Exception as e:
