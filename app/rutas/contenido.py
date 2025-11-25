@@ -190,19 +190,16 @@ async def publicar_contenido(
                 elif red == "whatsapp":
                     wa_service = WhatsApp()
                     
-                    # Leer archivo a bytes
-                    with open(ruta_temp, "rb") as f:
-                        imagen_bytes = f.read()
+                    with open(ruta_temp, "rb") as img_file:
+                        # LE PASAMOS EL NOMBRE REAL DEL ARCHIVO
+                        # Esto es lo que rellena la parte "name={nombre_imagen}"
+                        res = wa_service.publicar_foto(
+                            archivo_binario=img_file.read(), 
+                            mensaje=texto_final,
+                            nombre_archivo=archivo.filename 
+                        )
 
-                    # Enviar con Base64 (estructura EXACTA de tu imagen)
-                    res = wa_service.publicar_estado(
-                        archivo_binario=imagen_bytes,
-                        nombre_archivo=nombre_temp,
-                        caption=texto_final
-                    )
-
-                    msg_id = res.get('id', res.get('sent', 'Enviado'))
-                    resultados[red] = {"status": "ok", "post_id": str(msg_id)}
+                    resultados[red] = {"status": "ok", "post_id": res}
 
                 # --- INSTAGRAM (Usa URL de S3) ---
                 elif red == "instagram":
