@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import RedirectResponse
 from typing import Optional
 import logging
 
@@ -101,7 +102,8 @@ async def callback_tiktok(
         # Limpiar verifier
         GestorTokens.eliminar_verifier(user_id, "tiktok")
         
-        return {"success": True, "mensaje": "TikTok conectado! Cierra esta ventana"}
+        #return {"success": True, "mensaje": "TikTok conectado! Cierra esta ventana"}
+        return RedirectResponse(url="https://localhost:4200")
         
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

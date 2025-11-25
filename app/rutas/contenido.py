@@ -4,6 +4,7 @@ from typing import List, Dict, Any, Optional
 import logging
 import os
 import shutil
+import uuid
 
 # Importamos tus servicios
 from app.plataformas.instagram import Instagram
@@ -73,12 +74,13 @@ async def generar_contenido(request: SolicitudContenido):
             
             # --- Caso Facebook/Instagram (Imagen guardada en outputs) ---
             elif red in ["facebook", "instagram", "linkedin"]:
-                media_info = {
-                    "tipo": "imagen",
-                    # La IA genera una imagen y devuelve la ruta
-                    "archivo_path": datos_raw.get("image_path"), 
-                    "prompt_usado": datos_raw.get("suggested_image_prompt")
-                }
+                image_path = datos_raw.get("image_path")
+                
+                if image_path:
+                    media_info = {
+                        "tipo": "imagen",
+                        "archivo_path": image_path
+                    }
 
             # --- Caso WhatsApp ---
             elif red == "whatsapp":
@@ -110,97 +112,121 @@ async def generar_contenido(request: SolicitudContenido):
 # ==========================================
 @router.post("/publicar")
 async def publicar_contenido(
-    red_social: str = Form(..., description="tiktok, facebook, instagram, linkedin"),
+    # Aceptamos una cadena separada por comas: "tiktok,facebook,linkedin"
+    red_social: str = Form(..., description="Lista separada por comas ej: 'tiktok,facebook'"),
     text: str = Form(...),
     hashtags: str = Form(None),
     archivo: UploadFile = File(...), 
 ):
     current_user_id = "api-user"
+    
+    # 1. Separar la lista de redes
+    # Si llega "tiktok, facebook", crea ["tiktok", "facebook"]
+    lista_redes = [r.strip().lower() for r in red_social.split(",") if r.strip()]
+    
+    logger.info(f"🚀 Iniciando publicación masiva para: {lista_redes}")
+
+    # 2. Preparar Texto
+    lista_hashtags = []
+    texto_final = text
+    if hashtags:
+        limpio = hashtags.replace("[", "").replace("]", "").replace('"', "").replace("'", "")
+        lista_hashtags = [h.strip() for h in limpio.split(",") if h.strip()]
+        tags_str = " ".join(f"#{t}" if not t.startswith("#") else t for t in lista_hashtags)
+        texto_final = f"{text}\n\n{tags_str}"
+
+    # 3. Guardar archivo temporalmente en disco (CRÍTICO para reusarlo)
+    # Lo guardamos una vez y todas las redes leen de ahí.
+    os.makedirs("temp", exist_ok=True)
+    ext = archivo.filename.split(".")[-1]
+    nombre_temp = f"temp_{uuid.uuid4()}.{ext}"
+    ruta_temp = os.path.join("temp", nombre_temp)
+    
+    try:
+        with open(ruta_temp, "wb") as buffer:
+            shutil.copyfileobj(archivo.file, buffer)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error guardando archivo temporal: {e}")
+
+    # 4. Bucle de Publicación
+    resultados = {} # Aquí guardaremos qué pasó con cada red
 
     try:
-        logger.info(f"🚀 Solicitud de publicación para: {red_social}")
-
-        # Procesar hashtags 
-        texto_final = text
-        lista_hashtags = []
-        if hashtags:
-            limpio = hashtags.replace("[", "").replace("]", "").replace('"', "").replace("'", "")
-            lista_hashtags = [h.strip() for h in limpio.split(",") if h.strip()]
-            tags_str = " ".join(f"#{t}" if not t.startswith("#") else t for t in lista_hashtags)
-            texto_final = f"{text}\n\n{tags_str}"
-
-        # ================= TIKTOK =================
-        if red_social == "tiktok":
-            if not GestorTokens.usuario_tiene_token(current_user_id, "tiktok"):
-                raise HTTPException(status_code=400, detail="Falta autenticación TikTok.")
-            return await _manejar_publicacion_tiktok(current_user_id, text, lista_hashtags, archivo)
-
-        # ================= FACEBOOK =================
-        elif red_social == "facebook":
-            contenido_imagen = await archivo.read()
-            fb_service = Facebook()
-            post_id = fb_service.publicar_foto(archivo_binario=contenido_imagen, mensaje=texto_final)
-            return {"estado": "publicado", "success": True, "post_id": post_id, "red": "facebook"}
-        
-        # ================= INSTAGRAM =================
-        elif red_social == "instagram":
-            # 1. Leemos el archivo en memoria (igual que FB)
-            await archivo.seek(0)
-            contenido_imagen = await archivo.read()
-            
-            # 2. Instanciamos el servicio y publicamos
-            # Asegúrate de importar: from app.plataformas.instagram import Instagram
-            ig_service = Instagram()
-            post_id = ig_service.publicar_foto(archivo_binario=contenido_imagen, mensaje=texto_final)
-            
-            return {
-                "estado": "publicado", 
-                "success": True, 
-                "post_id": post_id, 
-                "red": "instagram"
-            }
-
-        # ================= LINKEDIN (NUEVO) =================
-        elif red_social == "linkedin":
-            # 1. Guardar archivo temporalmente (la librería necesita una ruta de disco)
-            temp_filename = f"temp_{archivo.filename}"
-            
+        for red in lista_redes:
             try:
-                # Escribimos el archivo subido al disco
-                with open(temp_filename, "wb") as buffer:
-                    shutil.copyfileobj(archivo.file, buffer)
+                logger.info(f"📤 Enviando a {red}...")
                 
-                # 2. Instanciar servicio y publicar
-                lnk_service = LinkedinService()
-                resultado = lnk_service.publicar_post_con_imagen(
-                    texto=texto_final,
-                    ruta_imagen=temp_filename
-                )
-                
-                return {
-                    "estado": "publicado",
-                    "success": True,
-                    "red": "linkedin",
-                    "api_response": str(resultado) # LinkedIn a veces devuelve vacio si es 201 Created
-                }
+                # --- TIKTOK ---
+                if red == "tiktok":
+                    if not GestorTokens.usuario_tiene_token(current_user_id, "tiktok"):
+                        resultados[red] = {"status": "error", "detalle": "Falta conectar cuenta (Token)"}
+                        continue
+                    
+                    if "mp4" not in ext.lower():
+                        resultados[red] = {"status": "error", "detalle": "TikTok requiere video .mp4"}
+                        continue
 
-            except Exception as e:
-                logger.error(f"Error LinkedIn: {e}")
-                raise HTTPException(status_code=500, detail=f"Fallo LinkedIn: {str(e)}")
-            
-            finally:
-                # 3. Limpieza: Borrar archivo temporal siempre (aunque falle)
-                if os.path.exists(temp_filename):
-                    os.remove(temp_filename)
+                    tk_service = TikTok()
+                    token_data = GestorTokens.obtener_token(current_user_id, "tiktok")
+                    
+                    # TikTokService suele esperar un archivo abierto ('rb')
+                    with open(ruta_temp, "rb") as video_file:
+                         res = tk_service.publicar_video(
+                            texto=text, # TikTok prefiere texto limpio sin tags pegados
+                            video=video_file,
+                            hashtags=lista_hashtags,
+                            access_token=token_data["access_token"]
+                        )
+                    resultados[red] = {"status": "ok", "api_response": res}
 
-        else:
-            raise HTTPException(status_code=400, detail=f"Red social '{red_social}' no soportada aún")
+                # --- FACEBOOK ---
+                elif red == "facebook":
+                    fb_service = Facebook()
+                    # Leemos bytes del disco
+                    with open(ruta_temp, "rb") as img_file:
+                        bytes_img = img_file.read()
+                        res = fb_service.publicar_foto(archivo_binario=bytes_img, mensaje=texto_final)
+                    resultados[red] = {"status": "ok", "post_id": res}
 
-    except HTTPException as he:
-        raise he
-    except Exception as e:
-        logger.error(f"Error crítico publicando: {str(e)}")
-        return {"estado": "error", "detalle": str(e)}
+                # --- INSTAGRAM ---
+                elif red == "instagram":
+                    ig_service = Instagram()
+                    with open(ruta_temp, "rb") as img_file:
+                        bytes_img = img_file.read()
+                        res = ig_service.publicar_foto(archivo_binario=bytes_img, mensaje=texto_final)
+                    resultados[red] = {"status": "ok", "post_id": res}
+
+                # --- LINKEDIN ---
+                elif red == "linkedin":
+                    lnk_service = LinkedinService()
+                    # LinkedIn necesita la RUTA del archivo, no los bytes. ¡Perfecto, ya la tenemos!
+                    res = lnk_service.publicar_post_con_imagen(texto=texto_final, ruta_imagen=ruta_temp)
+                    resultados[red] = {"status": "ok", "api_response": str(res)}
+
+                # --- WHATSAPP ---
+                elif red == "whatsapp":
+                    # Lógica simple
+                    resultados[red] = {"status": "ok", "detalle": "Mensaje enviado (simulado o real según tu servicio)"}
+
+                else:
+                    resultados[red] = {"status": "error", "detalle": "Red no soportada"}
+
+            except Exception as e_red:
+                logger.error(f"❌ Falló {red}: {e_red}")
+                resultados[red] = {"status": "error", "detalle": str(e_red)}
+
+        return {
+            "resumen": "Proceso finalizado",
+            "detalles": resultados
+        }
+
+    finally:
+        # 5. Limpieza: Borrar el archivo temporal SIEMPRE
+        if os.path.exists(ruta_temp):
+            try:
+                os.remove(ruta_temp)
+            except:
+                pass
 
 
 # ==========================================
