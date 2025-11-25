@@ -33,9 +33,13 @@ class Configuracion:
     IMGBB_API_KEY: str = os.getenv("IMGBB_API_KEY")
 
     # WhatsApp
-    """WHATSAPP_TOKEN: str = os.getenv("WHATSAPP_TOKEN")
-    WHATSAPP_PHONE_ID: str = os.getenv("WHATSAPP_PHONE_ID")
-    WHATSAPP_VERSION: str = os.getenv("WHATSAPP_VERSION", "v22.0")"""
+    WHAPI_TOKEN: str = os.getenv("WHAPI_TOKEN")
+
+    #AWS S3
+    AWS_REGION: str = os.getenv("AWS_REGION")
+    AWS_ACCESS_KEY_ID: str = os.getenv("AWS_ACCESS_KEY_ID")
+    AWS_SECRET_ACCESS_KEY: str = os.getenv("AWS_SECRET_ACCESS_KEY")
+    AWS_S3_BUCKET_NAME: str = os.getenv("AWS_S3_BUCKET_NAME")
     
     def validar(self):
         if not self.OPENAI_API_KEY:

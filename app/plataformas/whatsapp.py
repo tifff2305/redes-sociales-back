@@ -3,68 +3,73 @@ import os
 import base64
 import logging
 
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class WhatsApp:
     def __init__(self):
         self.token = os.getenv("WHAPI_TOKEN")
-        self.base_url = "https://gate.whapi.cloud"
+        self.base_url = os.getenv("WHAPI_URL", "https://gate.whapi.cloud")
         
         if not self.token:
-            logger.error("❌ No se encontró WHAPI_TOKEN en variables de entorno")
+            logger.error("❌ No se encontró WHAPI_TOKEN")
 
-    def _convertir_a_base64(self, ruta_archivo):
-        """Convierte imagen/video a Base64 para Whapi"""
-        with open(ruta_archivo, "rb") as file:
-            encoded_string = base64.b64encode(file.read()).decode('utf-8')
-        
-        ext = ruta_archivo.split('.')[-1].lower()
-        # Determinar MIME type correcto
-        if ext in ["mp4", "mov", "avi"]:
-            mime = "video/mp4"
-        elif ext in ["png"]:
-            mime = "image/png"
-        else:
-            mime = "image/jpeg"
-            
-        return f"data:{mime};name=estado.{ext};base64,{encoded_string}"
-
-    def publicar_estado(self, ruta_archivo, texto):
+    def publicar_estado(self, archivo_binario: bytes, nombre_archivo: str, caption: str):
         """
-        Publica contenido en el Estado (Status).
-        Target fijo: 'status@broadcast'
+        EXACTO según tu imagen:
+        - Endpoint: /stories/send/media
+        - Payload: SOLO media y caption (SIN contacts)
         """
         if not self.token:
             raise Exception("Falta WHAPI_TOKEN")
 
-        # 1. Preparar archivo
-        media_b64 = self._convertir_a_base64(ruta_archivo)
-        
-        # 2. Elegir endpoint según extensión
-        ext = ruta_archivo.split('.')[-1].lower()
-        es_video = ext in ["mp4", "mov", "avi"]
-        endpoint = "/messages/video" if es_video else "/messages/image"
-        
-        # 3. Configurar payload
+        # Endpoint EXACTO de tu imagen
+        base = self.base_url.rstrip("/")
+        url = f"{base}/stories/send/media"
+
+        # Construir Base64 EXACTO como tu imagen
+        try:
+            b64_bytes = base64.b64encode(archivo_binario)
+            b64_string = b64_bytes.decode('utf-8')
+            
+            # Detectar MIME type
+            ext = nombre_archivo.split('.')[-1].lower()
+            mime = "image/jpeg"
+            if ext == "png":
+                mime = "image/png"
+            elif ext in ["mp4", "mov"]:
+                mime = "video/mp4"
+
+            # Formato EXACTO: data:image/png;name=archivo.png;base64,datos
+            media_data = f"data:{mime};name={nombre_archivo};base64,{b64_string}"
+            
+        except Exception as e:
+            raise Exception(f"Error Base64: {e}")
+
+        # Payload EXACTO como tu imagen (SIN contacts)
         payload = {
-            "to": "status@broadcast",  # <--- MAGIA: Esto lo manda a tu Estado
-            "media": media_b64,
-            "caption": texto
+            "media": media_data, 
+            "caption": caption
         }
         
         headers = {
             "Authorization": f"Bearer {self.token}",
-            "Content-Type": "application/json"
+            "Content-Type": "application/json",
+            "Accept": "application/json"
         }
 
-        logger.info(f"📱 Subiendo Estado a WhatsApp ({endpoint})...")
+        logger.info(f"🚀 Enviando story a: {url}")
+        logger.info(f"📦 Payload estructura: media + caption (sin contacts)")
         
         try:
-            response = requests.post(f"{self.base_url}{endpoint}", headers=headers, json=payload)
+            response = requests.post(url, headers=headers, json=payload)
+            
+            if response.status_code >= 400:
+                logger.error(f"❌ Error API ({response.status_code}): {response.text}")
+                
             response.raise_for_status()
+            logger.info("✅ Historia publicada exitosamente")
             return response.json()
+            
         except requests.exceptions.RequestException as e:
-            logger.error(f"❌ Error Whapi: {e}")
-            if e.response is not None:
-                logger.error(f"Detalle API: {e.response.text}")
-            raise Exception(f"Error publicando estado: {e}")
+            raise Exception(f"Error Whapi: {e}")

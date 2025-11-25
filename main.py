@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
+from app.rutas.ingreso import router as ingreso_router
 from app.rutas.contenido import router as contenido_router
 from app.rutas.oauth import router as oauth_router
 
@@ -28,6 +29,7 @@ os.makedirs("temp", exist_ok=True) # Crear si no existe
 app.mount("/temp", StaticFiles(directory="temp"), name="temp")
 
 # Incluir las rutas
+app.include_router(ingreso_router)
 app.include_router(contenido_router)
 app.include_router(oauth_router)
 

@@ -12,7 +12,6 @@ class Instagram:
     
     def __init__(self):
         config = obtener_configuracion()
-        # Asegúrate de agregar estas variables a tu config.py si no las tienes
         self.ig_user_id = config.INSTAGRAM_APP_ID
         self.access_token = config.INSTAGRAM_PAGE_ACCESS_TOKEN
         self.imgbb_key = config.IMGBB_API_KEY             
@@ -22,7 +21,7 @@ class Instagram:
         if not self.ig_user_id:
             logger.warning("⚠️ Falta INSTAGRAM_BUSINESS_ACCOUNT_ID en la configuración")
 
-    # ==================== PUBLICACIÓN DIRECTA (Lo que usas en el endpoint /publicar) ====================
+    # ==================== PUBLICACIÓN CON IMGBB ====================
     def publicar_foto(self, archivo_binario, mensaje: str) -> str:
         """
         Recibe bytes de imagen, los sube a ImgBB para obtener URL y publica en IG.
@@ -30,7 +29,7 @@ class Instagram:
         logger.info("🚀 Iniciando publicación en Instagram...")
 
         try:
-            # PASO 0: Convertir bytes a URL pública (Requisito de Instagram)
+            # PASO 0: Convertir bytes a URL pública usando ImgBB
             image_url = self._subir_a_hosting_temporal(archivo_binario)
             
             # PASO 1: Crear contenedor de medios en Instagram
@@ -45,7 +44,7 @@ class Instagram:
             logger.error(f"❌ Error en publicación Instagram: {e}")
             raise e
 
-    # ==================== MÉTODOS PRIVADOS (La "Magia") ====================
+    # ==================== MÉTODOS PRIVADOS ====================
 
     def _subir_a_hosting_temporal(self, image_bytes) -> str:
         """Sube la imagen a ImgBB para obtener una URL pública temporal"""

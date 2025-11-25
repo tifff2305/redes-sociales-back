@@ -1,90 +1,107 @@
-from fastapi import APIRouter, HTTPException, Form, File, UploadFile
+from fastapi import APIRouter, HTTPException, Form, File, UploadFile, Depends
 from pydantic import BaseModel, Field
 from typing import List, Dict, Any, Optional
+from sqlalchemy.orm import Session
 import logging
 import os
 import shutil
 import uuid
 
-# Importamos tus servicios
+# --- IMPORTACIONES DE TUS MÓDULOS ---
+from app.config.bd import obtener_bd
+from app.modelos.esquemas import SolicitudGenerarContenido
+from app.modelos.tablas import Usuario, Chat, Mensaje
+from app.utilidades.dependencia import obtener_usuario_actual
+from app.servicios.ia import ServicioIA
+
+# --- SERVICIOS ---
+from app.servicios.aws_s3 import GestorS3  # <--- NUEVO: Para subir a la nube
 from app.plataformas.instagram import Instagram
 from app.plataformas.whatsapp import WhatsApp
-from app.servicios.ia import ServicioIA
-from app.repositorios.tokens import GestorTokens
 from app.plataformas.tiktok import TikTok
 from app.plataformas.facebook import Facebook
 from app.plataformas.linkedin import LinkedinService
+from app.repositorios.tokens import GestorTokens
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="")
 servicio_ia = ServicioIA()
 
-# Modelo para el endpoint /generar
-class SolicitudContenido(BaseModel):
-    contenido: str = Field(..., min_length=10)
-    redes: List[str]
-
 # ==========================================
-# 1. ENDPOINT: GENERAR CONTENIDO (IA)
+# 1. ENDPOINT: GENERAR CONTENIDO
 # ==========================================
 @router.post("/generar", response_model=Dict[str, Any])
-async def generar_contenido(request: SolicitudContenido):
-    user_id = "api-user" 
-
+async def generar_contenido(
+    request: SolicitudGenerarContenido,
+    usuario_actual: Usuario = Depends(obtener_usuario_actual),
+    db: Session = Depends(obtener_bd)
+):
     try:
-        logger.info(f"🧠 Iniciando generación IA para: {request.redes}")
+        logger.info(f"🧠 Usuario {usuario_actual.id} generando contenido...")
+
+        # 1. Crear Chat en BD
+        nuevo_chat = Chat(
+            usuario_id=usuario_actual.id,
+            titulo=f"Gen: {request.contenido[:20]}..."
+        )
+        db.add(nuevo_chat)
+        db.commit()
+        db.refresh(nuevo_chat)
         
-        # 1. Llamamos al servicio central de IA
-        resultado_ia = servicio_ia.generar_contenido_completo(
-            user_id=user_id,
+        # 2. Guardar Prompt
+        mensaje_user = Mensaje(
+            chat_id=nuevo_chat.id,
+            rol="user",
             contenido=request.contenido,
-            target_networks=request.redes
+            redes_objetivo=",".join(request.target_networks)
+        )
+        db.add(mensaje_user)
+        db.commit()
+
+        # 3. Llamar a la IA
+        resultado_ia = servicio_ia.generar_contenido_completo(
+            user_id=str(usuario_actual.id),
+            contenido=request.contenido,
+            target_networks=request.target_networks
         )
 
+        # 4. Procesar respuesta
         respuesta_final = {}
-
-        # 2. Procesamos la respuesta para el Frontend
-        for red in request.redes:
-            if red not in resultado_ia:
-                continue
+        for red in request.target_networks:
+            if red not in resultado_ia: continue
 
             datos_raw = resultado_ia[red]
-            
-            # Estructura base
             nodo_red = {
                 "text": datos_raw.get("text", ""),
                 "hashtags": datos_raw.get("hashtags", [])
             }
             
-            # Información multimedia
             media_info = {}
-            
-            # --- Caso TikTok (Video) ---
             if red == "tiktok":
                 video_path = datos_raw.get("video_path")
                 if video_path:
-                    media_info = {
-                        "tipo": "video",
-                        "archivo_path": video_path,
-                        "video_hook": datos_raw.get("video_hook")
-                    }
-            
-            # --- Caso Facebook/Instagram (Imagen guardada en outputs) ---
+                    media_info = {"tipo": "video", "archivo_path": video_path, "video_hook": datos_raw.get("video_hook")}
             elif red in ["facebook", "instagram", "linkedin", "whatsapp"]:
                 image_path = datos_raw.get("image_path")
-                
                 if image_path:
-                    media_info = {
-                        "tipo": "imagen",
-                        "archivo_path": image_path
-                    }
+                    media_info = {"tipo": "imagen", "archivo_path": image_path}
+
             if media_info:
                 nodo_red["media_info"] = media_info
             
             respuesta_final[red] = nodo_red
 
-            
+        # 5. Guardar respuesta en BD
+        mensaje_assistant = Mensaje(
+            chat_id=nuevo_chat.id,
+            rol="assistant",
+            contenido=str(respuesta_final),
+            redes_objetivo=",".join(request.target_networks)
+        )
+        db.add(mensaje_assistant)
+        db.commit()
+
         return respuesta_final
 
     except Exception as e:
@@ -93,35 +110,22 @@ async def generar_contenido(request: SolicitudContenido):
 
 
 # ==========================================
-# 2. ENDPOINT: PUBLICAR (Redes Sociales)
+# 2. ENDPOINT: PUBLICAR (CON AWS S3)
 # ==========================================
 @router.post("/publicar")
 async def publicar_contenido(
-    # Aceptamos una cadena separada por comas: "tiktok,facebook,linkedin"
-    red_social: str = Form(..., description="Lista separada por comas ej: 'tiktok,facebook'"),
+    red_social: str = Form(...),
     text: str = Form(...),
     hashtags: str = Form(None),
-    archivo: UploadFile = File(...), 
+    archivo: UploadFile = File(...),
+    usuario_actual: Usuario = Depends(obtener_usuario_actual),
+    db: Session = Depends(obtener_bd)
 ):
-    current_user_id = "api-user"
-    
-    # 1. Separar la lista de redes
-    # Si llega "tiktok, facebook", crea ["tiktok", "facebook"]
+    current_user_id = str(usuario_actual.id)
     lista_redes = [r.strip().lower() for r in red_social.split(",") if r.strip()]
-    
-    logger.info(f"🚀 Iniciando publicación masiva para: {lista_redes}")
+    logger.info(f"🚀 Usuario {usuario_actual.email} publicando en: {lista_redes}")
 
-    # 2. Preparar Texto
-    lista_hashtags = []
-    texto_final = text
-    if hashtags:
-        limpio = hashtags.replace("[", "").replace("]", "").replace('"', "").replace("'", "")
-        lista_hashtags = [h.strip() for h in limpio.split(",") if h.strip()]
-        tags_str = " ".join(f"#{t}" if not t.startswith("#") else t for t in lista_hashtags)
-        texto_final = f"{text}\n\n{tags_str}"
-
-    # 3. Guardar archivo temporalmente en disco (CRÍTICO para reusarlo)
-    # Lo guardamos una vez y todas las redes leen de ahí.
+    # 1. Guardar archivo temporalmente en disco
     os.makedirs("temp", exist_ok=True)
     ext = archivo.filename.split(".")[-1]
     nombre_temp = f"temp_{uuid.uuid4()}.{ext}"
@@ -133,157 +137,150 @@ async def publicar_contenido(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error guardando archivo temporal: {e}")
 
-    # 4. Bucle de Publicación
-    resultados = {} # Aquí guardaremos qué pasó con cada red
+    # 2. Preparar Texto
+    texto_final = text
+    if hashtags:
+        limpio = hashtags.replace("[", "").replace("]", "").replace('"', "").replace("'", "")
+        lista_hashtags = [h.strip() for h in limpio.split(",") if h.strip()]
+        tags_str = " ".join(f"#{t}" if not t.startswith("#") else t for t in lista_hashtags)
+        texto_final = f"{text}\n\n{tags_str}"
+    else:
+        lista_hashtags = []
+
+    # 3. SUBIR A AWS S3 (Si es necesario)
+    """url_publica_s3 = ""
+    redes_que_piden_url = ["instagram", "whatsapp"] # Redes que prefieren URL
+    necesita_subida = any(r in lista_redes for r in redes_que_piden_url)
+
+    if necesita_subida:
+        try:
+            logger.info("☁️ Subiendo archivo a AWS S3...")
+            s3_service = GestorS3()
+            # Subimos el archivo y obtenemos la URL pública (https://bucket...)
+            url_publica_s3 = s3_service.subir_archivo(ruta_temp, nombre_temp)
+        except Exception as e:
+            logger.error(f"Error S3: {e}")
+            # No detenemos el proceso, quizás otras redes (TikTok) funcionen localmente
+            url_publica_s3 = None """
+
+    resultados = {}
 
     try:
         for red in lista_redes:
             try:
-                logger.info(f"📤 Enviando a {red}...")
-                
-                # --- TIKTOK ---
+                # --- TIKTOK (Usa archivo local) ---
                 if red == "tiktok":
-                    if not GestorTokens.usuario_tiene_token(current_user_id, "tiktok"):
+                    # Verificar token en BD
+                    if not GestorTokens.usuario_tiene_token(db, int(current_user_id), "tiktok"):
                         resultados[red] = {"status": "error", "detalle": "Falta conectar cuenta (Token)"}
                         continue
                     
-                    if "mp4" not in ext.lower():
-                        resultados[red] = {"status": "error", "detalle": "TikTok requiere video .mp4"}
-                        continue
-
-                    tk_service = TikTok()
-                    token_data = GestorTokens.obtener_token(current_user_id, "tiktok")
-                    
-                    # TikTokService suele esperar un archivo abierto ('rb')
+                    # Usamos helper para manejar refresh token
                     with open(ruta_temp, "rb") as video_file:
-                         res = tk_service.publicar_video(
-                            texto=text, # TikTok prefiere texto limpio sin tags pegados
-                            video=video_file,
-                            hashtags=lista_hashtags,
-                            access_token=token_data["access_token"]
+                        res = await _manejar_publicacion_tiktok(
+                            db, # Pasamos BD
+                            int(current_user_id), 
+                            texto_final, 
+                            lista_hashtags, 
+                            video_file
                         )
                     resultados[red] = {"status": "ok", "api_response": res}
 
-                # --- FACEBOOK ---
-                elif red == "facebook":
-                    fb_service = Facebook()
-                    # Leemos bytes del disco
-                    with open(ruta_temp, "rb") as img_file:
-                        bytes_img = img_file.read()
-                        res = fb_service.publicar_foto(archivo_binario=bytes_img, mensaje=texto_final)
-                    resultados[red] = {"status": "ok", "post_id": res}
-
-                # --- INSTAGRAM ---
-                elif red == "instagram":
-                    ig_service = Instagram()
-                    with open(ruta_temp, "rb") as img_file:
-                        bytes_img = img_file.read()
-                        res = ig_service.publicar_foto(archivo_binario=bytes_img, mensaje=texto_final)
-                    resultados[red] = {"status": "ok", "post_id": res}
-
-                # --- LINKEDIN ---
-                elif red == "linkedin":
-                    lnk_service = LinkedinService()
-                    # LinkedIn necesita la RUTA del archivo, no los bytes. ¡Perfecto, ya la tenemos!
-                    res = lnk_service.publicar_post_con_imagen(texto=texto_final, ruta_imagen=ruta_temp)
-                    resultados[red] = {"status": "ok", "api_response": str(res)}
-
-                # --- WHATSAPP ---
+                # --- WHATSAPP (Usa URL de S3) ---
                 elif red == "whatsapp":
                     wa_service = WhatsApp()
-                    # Aquí llamamos al nuevo método exclusivo para estados
-                    res = wa_service.publicar_estado(
-                        ruta_archivo=ruta_temp,
-                        texto=texto_final # Incluye los hashtags si los hay
-                    )
-                    # Whapi devuelve algo como: {'messages': [{'id': 'ABEG...', ...}]}
-                    msg_id = res.get('messages', [{}])[0].get('id', 'Enviado')
-                    resultados[red] = {"status": "ok", "post_id": msg_id}
+                    
+                    # Leer archivo a bytes
+                    with open(ruta_temp, "rb") as f:
+                        imagen_bytes = f.read()
 
-                else:
-                    resultados[red] = {"status": "error", "detalle": "Red no soportada"}
+                    # Enviar con Base64 (estructura EXACTA de tu imagen)
+                    res = wa_service.publicar_estado(
+                        archivo_binario=imagen_bytes,
+                        nombre_archivo=nombre_temp,
+                        caption=texto_final
+                    )
+
+                    msg_id = res.get('id', res.get('sent', 'Enviado'))
+                    resultados[red] = {"status": "ok", "post_id": str(msg_id)}
+
+                # --- INSTAGRAM (Usa URL de S3) ---
+                elif red == "instagram":
+                    ig_service = Instagram()
+                    # Leer el archivo a bytes
+                    with open(ruta_temp, "rb") as img_file:
+                        res = ig_service.publicar_foto(
+                            archivo_binario=img_file.read(), 
+                            mensaje=texto_final
+                        )
+
+                    resultados[red] = {"status": "ok", "post_id": res}
+
+                # --- FACEBOOK (Usa Bytes) ---
+                elif red == "facebook":
+                     fb_service = Facebook()
+                     with open(ruta_temp, "rb") as img_file:
+                        res = fb_service.publicar_foto(img_file.read(), texto_final)
+                     resultados[red] = {"status": "ok", "post_id": res}
+
+                # --- LINKEDIN (Usa ruta local o bytes) ---
+                elif red == "linkedin":
+                     lnk_service = LinkedinService()
+                     res = lnk_service.publicar_post_con_imagen(texto_final, ruta_temp)
+                     resultados[red] = {"status": "ok", "api_response": str(res)}
 
             except Exception as e_red:
                 logger.error(f"❌ Falló {red}: {e_red}")
                 resultados[red] = {"status": "error", "detalle": str(e_red)}
 
-        return {
-            "resumen": "Proceso finalizado",
-            "detalles": resultados
-        }
+        return {"resumen": "Proceso finalizado", "detalles": resultados}
 
     finally:
-        # Limpieza
         if os.path.exists(ruta_temp):
             try:
                 os.remove(ruta_temp)
             except:
                 pass
 
-
 # ==========================================
-# 3. MÉTODOS PRIVADOS (Helpers)
+# 3. HELPERS
 # ==========================================
-
-async def _manejar_publicacion_tiktok(user_id, text, hashtags, archivo):
-    """Maneja la lógica de TikTok incluyendo el reintento por token vencido"""
+async def _manejar_publicacion_tiktok(db: Session, user_id: int, text, hashtags, archivo_obj):
+    """Maneja TikTok con reintento de token"""
     tiktok_service = TikTok()
     
-    # 1. Obtener token
-    token_data = GestorTokens.obtener_token(user_id, "tiktok")
+    token_data = GestorTokens.obtener_token(db, user_id, "tiktok")
     if not token_data:
-         raise HTTPException(status_code=400, detail="Error de tokens TikTok")
+         raise Exception("Error recuperando token TikTok de BD")
          
     access_token = token_data["access_token"]
     
     try:
-        # 2. Intentar publicar
-        await archivo.seek(0) # Asegurar inicio del archivo
-        resultado = tiktok_service.publicar_video(
-            texto=text,
-            video=archivo,
-            hashtags=hashtags,
-            access_token=access_token
-        )
-        return resultado
+        # Intentar publicar
+        return tiktok_service.publicar_video(text, archivo_obj, hashtags, access_token)
 
     except Exception as e:
-        # 3. Capturar error de token vencido
         error_str = str(e).lower()
-        if "401" in error_str or "access token expired" in error_str or "invalid_grant" in error_str:
-            
-            logger.warning("⚠️ Token TikTok vencido. Intentando auto-refresh...")
+        if "401" in error_str or "access token expired" in error_str:
+            logger.warning("⚠️ Token TikTok vencido. Refrescando...")
             
             refresh_token = token_data.get("refresh_token")
             if not refresh_token:
-                raise HTTPException(status_code=401, detail="Token vencido. Reconecta tu cuenta.")
+                raise Exception("Token vencido y sin refresh token.")
 
-            try:
-                # A. Refrescar Token
-                nuevo_token = tiktok_service.refrescar_token(refresh_token)
-                
-                # B. Guardar nuevo token
-                GestorTokens.guardar_token(
-                    user_id=user_id,
-                    red_social="tiktok",
-                    access_token=nuevo_token["access_token"],
-                    refresh_token=nuevo_token.get("refresh_token", refresh_token),
-                    expires_in=nuevo_token.get("expires_in")
-                )
-                
-                # C. Reintentar Publicación
-                logger.info("🔄 Reintentando publicación con nuevo token...")
-                await archivo.seek(0)
-                resultado = tiktok_service.publicar_video(
-                    texto=text,
-                    video=archivo,
-                    hashtags=hashtags,
-                    access_token=nuevo_token["access_token"]
-                )
-                return resultado
-
-            except Exception:
-                raise HTTPException(status_code=401, detail="Tu sesión expiró completamente. Por favor conecta TikTok nuevamente.")
-        
+            # Refrescar
+            nuevo = tiktok_service.refrescar_token(refresh_token)
+            
+            # Guardar nuevo
+            GestorTokens.guardar_token(
+                db, user_id, "tiktok",
+                nuevo["access_token"],
+                nuevo.get("refresh_token", refresh_token),
+                nuevo.get("expires_in")
+            )
+            
+            # Reintentar
+            archivo_obj.seek(0)
+            return tiktok_service.publicar_video(text, archivo_obj, hashtags, nuevo["access_token"])
         else:
             raise e
