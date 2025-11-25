@@ -24,8 +24,6 @@ servicio_ia = ServicioIA()
 class SolicitudContenido(BaseModel):
     contenido: str = Field(..., min_length=10)
     redes: List[str]
-    telefono_destino: Optional[str] = None
-
 
 # ==========================================
 # 1. ENDPOINT: GENERAR CONTENIDO (IA)
@@ -73,7 +71,7 @@ async def generar_contenido(request: SolicitudContenido):
                     }
             
             # --- Caso Facebook/Instagram (Imagen guardada en outputs) ---
-            elif red in ["facebook", "instagram", "linkedin"]:
+            elif red in ["facebook", "instagram", "linkedin", "whatsapp"]:
                 image_path = datos_raw.get("image_path")
                 
                 if image_path:
@@ -81,24 +79,11 @@ async def generar_contenido(request: SolicitudContenido):
                         "tipo": "imagen",
                         "archivo_path": image_path
                     }
-
-            # --- Caso WhatsApp ---
-            elif red == "whatsapp":
-                if not request.telefono_destino:
-                    respuesta_final[red] = {"error": "Falta teléfono de destino"}
-                    continue
-                
-                cliente_wa = WhatsApp()
-                resp = cliente_wa.enviar_contenido_generado(
-                    numero_destino=request.telefono_destino,
-                    texto_ia=datos_raw["text"]
-                )
-                nodo_red["estado_envio"] = f"Enviado (ID: {resp.get('messages', [{}])[0].get('id')})"
-
             if media_info:
                 nodo_red["media_info"] = media_info
             
             respuesta_final[red] = nodo_red
+
             
         return respuesta_final
 
@@ -205,8 +190,15 @@ async def publicar_contenido(
 
                 # --- WHATSAPP ---
                 elif red == "whatsapp":
-                    # Lógica simple
-                    resultados[red] = {"status": "ok", "detalle": "Mensaje enviado (simulado o real según tu servicio)"}
+                    wa_service = WhatsApp()
+                    # Aquí llamamos al nuevo método exclusivo para estados
+                    res = wa_service.publicar_estado(
+                        ruta_archivo=ruta_temp,
+                        texto=texto_final # Incluye los hashtags si los hay
+                    )
+                    # Whapi devuelve algo como: {'messages': [{'id': 'ABEG...', ...}]}
+                    msg_id = res.get('messages', [{}])[0].get('id', 'Enviado')
+                    resultados[red] = {"status": "ok", "post_id": msg_id}
 
                 else:
                     resultados[red] = {"status": "error", "detalle": "Red no soportada"}
@@ -221,7 +213,7 @@ async def publicar_contenido(
         }
 
     finally:
-        # 5. Limpieza: Borrar el archivo temporal SIEMPRE
+        # Limpieza
         if os.path.exists(ruta_temp):
             try:
                 os.remove(ruta_temp)

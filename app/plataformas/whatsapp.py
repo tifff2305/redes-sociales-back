@@ -1,71 +1,70 @@
 import requests
+import os
+import base64
 import logging
-import json
-from typing import Dict, Any
-
-from app.config.configuracion import obtener_configuracion
 
 logger = logging.getLogger(__name__)
 
 class WhatsApp:
-    
     def __init__(self):
-        config = obtener_configuracion()
-        self.token = config.WHATSAPP_TOKEN
-        self.phone_id = config.WHATSAPP_PHONE_ID
-        self.version = config.WHATSAPP_VERSION
-        self.base_url = f"https://graph.facebook.com/{self.version}"
-        self.headers = {
+        self.token = os.getenv("WHAPI_TOKEN")
+        self.base_url = "https://gate.whapi.cloud"
+        
+        if not self.token:
+            logger.error("❌ No se encontró WHAPI_TOKEN en variables de entorno")
+
+    def _convertir_a_base64(self, ruta_archivo):
+        """Convierte imagen/video a Base64 para Whapi"""
+        with open(ruta_archivo, "rb") as file:
+            encoded_string = base64.b64encode(file.read()).decode('utf-8')
+        
+        ext = ruta_archivo.split('.')[-1].lower()
+        # Determinar MIME type correcto
+        if ext in ["mp4", "mov", "avi"]:
+            mime = "video/mp4"
+        elif ext in ["png"]:
+            mime = "image/png"
+        else:
+            mime = "image/jpeg"
+            
+        return f"data:{mime};name=estado.{ext};base64,{encoded_string}"
+
+    def publicar_estado(self, ruta_archivo, texto):
+        """
+        Publica contenido en el Estado (Status).
+        Target fijo: 'status@broadcast'
+        """
+        if not self.token:
+            raise Exception("Falta WHAPI_TOKEN")
+
+        # 1. Preparar archivo
+        media_b64 = self._convertir_a_base64(ruta_archivo)
+        
+        # 2. Elegir endpoint según extensión
+        ext = ruta_archivo.split('.')[-1].lower()
+        es_video = ext in ["mp4", "mov", "avi"]
+        endpoint = "/messages/video" if es_video else "/messages/image"
+        
+        # 3. Configurar payload
+        payload = {
+            "to": "status@broadcast",  # <--- MAGIA: Esto lo manda a tu Estado
+            "media": media_b64,
+            "caption": texto
+        }
+        
+        headers = {
             "Authorization": f"Bearer {self.token}",
             "Content-Type": "application/json"
         }
 
-    def enviar_contenido_generado(self, numero_destino: str, texto_ia: str) -> Dict[str, Any]:
-
-        texto_seguro = texto_ia[:1000] 
-
-        url = f"{self.base_url}/{self.phone_id}/messages"
+        logger.info(f"📱 Subiendo Estado a WhatsApp ({endpoint})...")
         
-        # Estructura exacta para enviar variables (parameters)
-        payload = {
-            "messaging_product": "whatsapp",
-            "to": numero_destino,
-            "type": "template",
-            "template": {
-                "name": "contenido_generado",  # <--- TU PLANTILLA
-                "language": {
-                    "code": "es"  # "es" es el código estándar para Español genérico
-                },
-                "components": [
-                    {
-                        "type": "body",
-                        "parameters": [
-                            {
-                                "type": "text",
-                                "text": texto_seguro  # <--- Aquí va lo que generó la IA
-                            }
-                        ]
-                    }
-                ]
-            }
-        }
-
         try:
-            logger.info(f"📱 Enviando WhatsApp a {numero_destino}...")
-            response = requests.post(url, headers=self.headers, data=json.dumps(payload))
-            
-            # Si falla (ej: 400 o 401), lanzamos error para verlo en el log
+            response = requests.post(f"{self.base_url}{endpoint}", headers=headers, json=payload)
             response.raise_for_status()
-            
-            data = response.json()
-            logger.info(f" Mensaje enviado con éxito. ID: {data.get('messages', [{}])[0].get('id')}")
-            return data
-
+            return response.json()
         except requests.exceptions.RequestException as e:
-            error_msg = f"Error enviando WhatsApp: {str(e)}"
-            if hasattr(e, 'response') and e.response is not None:
-                # Esto imprime el error exacto que devuelve Meta (muy útil para depurar)
-                logger.error(f" Detalle Error Meta: {e.response.text}")
-            else:
-                logger.error(f" {error_msg}")
-            raise ValueError(error_msg)
+            logger.error(f"❌ Error Whapi: {e}")
+            if e.response is not None:
+                logger.error(f"Detalle API: {e.response.text}")
+            raise Exception(f"Error publicando estado: {e}")
