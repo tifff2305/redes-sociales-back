@@ -1,30 +1,77 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from fastapi.responses import RedirectResponse
-from typing import Optional
+from sqlalchemy.orm import Session
 import logging
 
-# Usamos tus clases nuevas (sin base de datos SQL)
+# IMPORTAMOS LA SEGURIDAD PARA OBTENER EL USUARIO REAL
+from app.utilidades.dependencia import obtener_usuario_actual
+from app.modelos.tablas import Usuario
+
 from app.repositorios.tokens import GestorTokens
 from app.plataformas.tiktok import TikTok
+from app.config.bd import SessionLocal # Necesario para guardar el token en el callback
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="")
 
-# ==================== 1. ENDPOINT PARA BOTÓN MANUAL (Opcional) ====================
+# Helper para obtener BD manualmente dentro del callback
+def obtener_bd_manual():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+
+# ==================== TOKENS (ESTADO) ====================
+# Quitamos {user_id} de la URL. Ahora es solo /tokens/estado
+@router.get("/tokens/estado")
+async def obtener_tokens_usuario(
+    # Obtenemos el usuario del token (Header Authorization)
+    usuario_actual: Usuario = Depends(obtener_usuario_actual),
+    db: Session = Depends(obtener_bd_manual) # O usa tu dependency normal 'obtener_bd'
+):
+    """
+    Verifica qué redes tiene conectadas el usuario logueado.
+    """
+    user_id = usuario_actual.id # ID real (ej: 1)
+    
+    repo_tokens = GestorTokens()
+    redes = ["tiktok", "facebook", "instagram", "linkedin", "whatsapp"]
+    
+    tokens_activos = []
+    
+    # IMPORTANTE: Asegúrate de pasar la sesión de BD 'db' si tu función lo pide.
+    # Si tu GestorTokens.usuario_tiene_token usa una sesión interna, está bien,
+    # pero según tu código anterior, 'usuario_tiene_token' pide 'db'.
+    
+    for red in redes:
+        # Pasamos el ID entero (1), no el string "api-user"
+        if repo_tokens.usuario_tiene_token(db, user_id, red):
+            tokens_activos.append(red)
+    
+    return {
+        "user_id": user_id,
+        "redes_conectadas": tokens_activos
+    }
+
+# ==================== 1. INICIAR CONEXIÓN ====================
 @router.get("/tiktok/conectar")
 async def conectar_tiktok(
-    user_id: str = Query(..., description="ID del usuario")
+    usuario_actual: Usuario = Depends(obtener_usuario_actual)
 ):
     try:
+        user_id_str = str(usuario_actual.id)
         tiktok_service = TikTok()
         
-        # Obtenemos URL y el Verificador de seguridad
-        auth_url, verifier = tiktok_service.obtener_url_oauth_con_verifier(user_id)
+        # 1. Obtenemos URL y Verifier
+        auth_url, verifier = tiktok_service.obtener_url_oauth_con_verifier(user_id_str)
         
-        # IMPORTANTE: Guardar el verifier temporalmente
+        # 2. Guardamos el verifier asociado a este ID real
         GestorTokens.guardar_verifier(
-            user_id=user_id,
+            user_id=user_id_str,
             red_social="tiktok",
             verifier=verifier
         )
@@ -38,135 +85,48 @@ async def conectar_tiktok(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ==================== 2. CALLBACK (OBLIGATORIO) ====================
-# TikTok redirigirá aquí después de que el usuario acepte
-@router.get("/tiktok/login")
-async def login_tiktok(user_id: str = Query("api-user")):
-    """
-    🔗 Endpoint simple: Genera URL de login y guarda verifier
-    El usuario abre esta URL, autoriza, y el callback guarda el token
-    """
-    try:
-        from app.plataformas.tiktok import TikTok
-        from app.repositorios.tokens import GestorTokens
-        
-        tiktok = TikTok()
-        
-        # Generar URL y verifier
-        auth_url, verifier = tiktok.obtener_url_oauth_con_verifier(user_id)
-        
-        # Guardar verifier
-        GestorTokens.guardar_verifier(user_id, "tiktok", verifier)
-        
-        return {
-            "auth_url": auth_url,
-            "mensaje": "Abre esta URL para autorizar TikTok"
-        }
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
+# ==================== 2. CALLBACK ====================
 @router.get("/tiktok/callback")
 async def callback_tiktok(
     code: str = Query(...),
-    state: str = Query(None)
+    state: str = Query(None) # Aquí llega el user_id dinámico
 ):
-    """
-    Callback automático de TikTok (guarda el token)
-    """
     try:
-        from app.plataformas.tiktok import TikTok
-        from app.repositorios.tokens import GestorTokens
-        
-        user_id = state or "api-user"
+        # Validamos que venga el state (que es tu user_id)
+        if not state:
+             raise HTTPException(status_code=400, detail="Falta el parámetro state (user_id)")
+
+        user_id = state 
         tiktok = TikTok()
         
-        # Recuperar verifier
-        verifier_data = GestorTokens.obtener_verifier(user_id, "tiktok")
-        if not verifier_data:
-            raise HTTPException(status_code=400, detail="Error: verifier no encontrado")
+        # --- CORRECCIÓN AQUÍ ---
+        # obtener_verifier devuelve el string directamente, NO un diccionario.
+        verifier = GestorTokens.obtener_verifier(user_id, "tiktok")
         
-        # Canjear código por token
-        token_data = tiktok.intercambiar_codigo_por_token(code, verifier_data['verifier'])
+        if not verifier:
+            raise HTTPException(status_code=400, detail="Error: verifier no encontrado o expiró")
         
-        # GUARDAR TOKEN
+        # Usamos la variable 'verifier' directamente (antes decía verifier['verifier'])
+        token_data = tiktok.intercambiar_codigo_por_token(code, verifier)
+        
+        # GUARDAR TOKEN (Usando el user_id que llegó en el state)
         GestorTokens.guardar_token(
-            user_id=user_id,
+            db=next(obtener_bd_manual()),
+            user_id=int(user_id),
             red_social="tiktok",
             access_token=token_data["access_token"],
             refresh_token=token_data.get("refresh_token"),
             expires_in=token_data.get("expires_in"),
-            metadata={"open_id": token_data.get("open_id")}
+            # metadata={"open_id": token_data.get("open_id")} # Descomenta si tu función lo soporta
         )
         
-        # Limpiar verifier
+        # Limpiar verifier usado
         GestorTokens.eliminar_verifier(user_id, "tiktok")
         
-        #return {"success": True, "mensaje": "TikTok conectado! Cierra esta ventana"}
-        return RedirectResponse(url="https://localhost:4200")
+        # Redirigir al frontend (ajusta el puerto si es necesario)
+        return RedirectResponse(url="http://localhost:4200/chat")
         
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/facebook/callback")
-async def callback_facebook(
-    code: str = Query(...),
-    state: str = Query(None)
-):
-    """Callback de OAuth Facebook"""
-    # TODO: Implementar
-    raise HTTPException(
-        status_code=501,
-        detail="Facebook OAuth no implementado aún"
-    )
-
-
-# ==================== INSTAGRAM ====================
-
-@router.get("/instagram/conectar")
-async def conectar_instagram(user_id: str = Query(...)):
-    """Inicia flujo OAuth de Instagram"""
-    # TODO: Implementar
-    raise HTTPException(
-        status_code=501,
-        detail="Instagram OAuth no implementado aún"
-    )
-
-
-@router.get("/instagram/callback")
-async def callback_instagram(
-    code: str = Query(...),
-    state: str = Query(None)
-):
-    """Callback de OAuth Instagram"""
-    # TODO: Implementar
-    raise HTTPException(
-        status_code=501,
-        detail="Instagram OAuth no implementado aún"
-    )
-
-
-# ==================== TOKENS ====================
-
-@router.get("/tokens/{user_id}")
-async def obtener_tokens_usuario(
-    user_id: str,
-
-):
-    """
-    Obtiene estado de tokens de un usuario.
-    Muestra qué redes tiene conectadas.
-    """
-    repo_tokens = GestorTokens()
-    redes = ["tiktok", "facebook", "instagram", "linkedin", "whatsapp"]
-    
-    tokens_activos = []
-    for red in redes:
-        if repo_tokens.usuario_tiene_token(user_id, red):
-            tokens_activos.append(red)
-    
-    return {
-        "user_id": user_id,
-        "redes_conectadas": tokens_activos
-    }
+        logger.error(f"Error Callback TikTok: {e}")
+        # Retornamos el error en JSON para verlo en el navegador si falla
+        return {"error": "Fallo en callback", "detalle": str(e)}
