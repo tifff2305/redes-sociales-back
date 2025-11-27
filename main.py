@@ -32,6 +32,7 @@ app.mount("/temp", StaticFiles(directory="temp"), name="temp")
 app.include_router(ingreso_router)
 app.include_router(contenido_router)
 app.include_router(oauth_router)
+app.mount("/outputs", StaticFiles(directory="outputs"), name="outputs")
 
 if __name__ == "__main__":
     import uvicorn
