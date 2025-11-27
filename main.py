@@ -6,6 +6,7 @@ from fastapi.staticfiles import StaticFiles
 from app.rutas.ingreso import router as ingreso_router
 from app.rutas.contenido import router as contenido_router
 from app.rutas.oauth import router as oauth_router
+from app.rutas.historial import router as historial_router
 
 app = FastAPI(title="API Redes Sociales", version="1.0.0")
 
@@ -32,6 +33,7 @@ app.mount("/temp", StaticFiles(directory="temp"), name="temp")
 app.include_router(ingreso_router)
 app.include_router(contenido_router)
 app.include_router(oauth_router)
+app.include_router(historial_router)
 app.mount("/outputs", StaticFiles(directory="outputs"), name="outputs")
 
 if __name__ == "__main__":
