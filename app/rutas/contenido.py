@@ -6,6 +6,7 @@ import logging
 import os
 import shutil
 import uuid
+import json
 
 # --- IMPORTACIONES DE TUS MÓDULOS ---
 from app.config.bd import obtener_bd
@@ -43,7 +44,7 @@ async def generar_contenido(
         # 1. Crear Chat en BD
         nuevo_chat = Chat(
             usuario_id=usuario_actual.id,
-            titulo=f"Gen: {request.contenido[:20]}..."
+            titulo=f"{request.contenido[:20]}..."
         )
         db.add(nuevo_chat)
         db.commit()
@@ -96,7 +97,8 @@ async def generar_contenido(
         mensaje_assistant = Mensaje(
             chat_id=nuevo_chat.id,
             rol="assistant",
-            contenido=str(respuesta_final),
+            # CAMBIO AQUÍ: Usar json.dumps para que se guarde con comillas dobles ""
+            contenido=json.dumps(respuesta_final), 
             redes_objetivo=",".join(request.target_networks)
         )
         db.add(mensaje_assistant)

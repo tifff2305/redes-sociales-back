@@ -6,6 +6,7 @@ from functools import lru_cache
 import os
 import base64
 import time
+import requests
 
 from app.config.configuracion import obtener_configuracion
 from app.utilidades.prompt import obtener_prompt
@@ -69,32 +70,41 @@ class ServicioIA:
             
             data_red = contenido_texto[red].copy()
             
-            # === MODIFICACIÓN PARA FACEBOOK E INSTAGRAM ===
-            if red in ["facebook", "instagram"]:
+            # === GENERACIÓN DE IMAGEN (Facebook, Instagram, LinkedIn, WhatsApp) ===
+            if red in ["facebook", "instagram", "whatsapp", "linkedin"]:
+                # 1. Intentamos obtener el prompt sugerido por la IA
                 prompt_imagen = data_red.get("suggested_image_prompt")
                 
+                # 2. FALLBACK: Si la IA olvidó el prompt, usamos el texto del post (cortado a 300 chars)
+                if not prompt_imagen:
+                    texto_post = data_red.get("text", "")
+                    if texto_post:
+                        prompt_imagen = f"A professional photorealistic image representing: {texto_post[:300]}"
+                        logger.warning(f"⚠️ IA no dio prompt para {red}, usando texto como fallback.")
+
+                # 3. Solo si tenemos prompt (que ahora casi siempre tendremos), generamos
                 if prompt_imagen:
                     try:
                         logger.info(f"🎨 Generando imagen para {red}...")
                         
-                        # 1. Generar con IA
-                        imagen_data = self.generar_imagen(prompt_imagen)
+                        imagen_bytes = self.generar_imagen(prompt_imagen)
                         
-                        # 2. Guardar en disco (Igual que TikTok)
-                        timestamp = int(time.time())
-                        nombre_archivo = f"{user_id}_{red}_{timestamp}.png"
-                        ruta_archivo = os.path.join("outputs", nombre_archivo)
-                        
-                        # Decodificar y escribir
-                        with open(ruta_archivo, "wb") as f:
-                            f.write(base64.b64decode(imagen_data["b64_json"]))
+                        if imagen_bytes:
+                            timestamp = int(time.time())
+                            # Usamos os.path.join para evitar problemas de slash en Windows
+                            nombre_archivo = f"{user_id}_{red}_{timestamp}.png"
+                            ruta_archivo = os.path.join("outputs", nombre_archivo)
                             
-                        # 3. Añadir la ruta a la respuesta
-                        data_red["image_path"] = ruta_archivo
-                        logger.info(f"✅ Imagen guardada en: {ruta_archivo}")
-                        
+                            with open(ruta_archivo, "wb") as f:
+                                f.write(imagen_bytes)
+                                
+                            data_red["image_path"] = ruta_archivo
+                            logger.info(f"✅ Imagen guardada en: {ruta_archivo}")
+                        else:
+                            logger.error(f"❌ La IA no retornó datos válidos para {red}.")
+
                     except Exception as e:
-                        logger.error(f"❌ Error generando imagen: {str(e)}")
+                        logger.error(f"❌ Error generando imagen {red}: {str(e)}")
             
             # Generar video para TikTok
             if red == "tiktok":
@@ -156,38 +166,65 @@ Genera contenido optimizado para cada red social solicitada."""
     def generar_imagen(
         self,
         prompt: str,
-        size: str = "1024x1024",
-        quality: str = "standard"  # 'standard' o 'hd' (gpt-image-1 soporta hd)
-    ) -> Dict[str, Any]:
-        
+        size: str = "1024x1024"
+    ) -> bytes:
+        """
+        Replica la lógica de generarImagen.js:
+        1. Intenta obtener b64_json.
+        2. Si no, intenta obtener URL y descargarla.
+        Retorna: Bytes de la imagen listos para guardar.
+        """
         try:
-            logger.info(f" Generando imagen con modelo: {self.modelo_imagen} | Calidad: {quality}")
+            logger.info(f" Generando imagen con modelo: {self.modelo_imagen}")
             
-            # Llamada a la API
-            respuesta = self.client.images.generate(
-                model=self.modelo_imagen,  # Usará 'gpt-image-1' desde tu config
-                prompt=prompt,
-                size=size,
-                quality=quality, 
-                n=1,
-                response_format="b64_json"
-            )
+            # Configuración de parámetros
+            # NOTA: En tu JS comentaste que 'response_format' daba error con gpt-image-1,
+            # pero el modelo suele devolver b64 por defecto.
+            # Aquí lo hacemos dinámico: si es gpt-4 o dall-e-3 estándar, pedimos b64.
+            # Si es tu modelo custom, dejamos que la API decida y nosotros parseamos la respuesta.
             
-            # Estructuramos la respuesta
-            resultado = {
-                "b64_json": respuesta.data[0].b64_json,
-                "prompt_usado": prompt,
+            params = {
+                "model": self.modelo_imagen,
+                "prompt": prompt,
                 "size": size,
-                "quality": quality,
-                "revised_prompt": getattr(respuesta.data[0], 'revised_prompt', prompt) # gpt-image-1 suele optimizar el prompt, es útil guardarlo
+                "n": 1,
             }
+
+            # Si NO es tu modelo custom raro, forzamos b64 para asegurar (DALL-E 3 lo requiere)
+            if "gpt-image-1" not in self.modelo_imagen:
+                params["response_format"] = "b64_json"
+
+            # Llamada a OpenAI
+            respuesta = self.client.images.generate(**params)
             
-            logger.info(" Imagen generada correctamente")
-            return resultado
+            # --- LÓGICA DE DETECCIÓN (INTENTO 1 y INTENTO 2 del JS) ---
+            data_obj = respuesta.data[0]
+            
+            # 1. Buscar b64_json
+            imagen_b64 = getattr(data_obj, 'b64_json', None)
+            
+            if imagen_b64:
+                logger.info("✅ Imagen recibida en Base64")
+                return base64.b64decode(imagen_b64)
+            
+            # 2. Buscar URL (Fallback)
+            imagen_url = getattr(data_obj, 'url', None)
+            
+            if imagen_url:
+                logger.info(f"🔗 Imagen recibida como URL, descargando... {imagen_url[:30]}...")
+                resp_img = requests.get(imagen_url)
+                resp_img.raise_for_status()
+                logger.info("✅ Imagen descargada correctamente")
+                return resp_img.content
+
+            raise ValueError("La API respondió, pero no se encontró ni 'b64_json' ni 'url'.")
             
         except Exception as e:
-            logger.error(f"❌ Error al generar imagen: {str(e)}")
-            raise ValueError(f"Error al generar imagen: {str(e)}")
+            logger.error(f"❌ Error crítico en generar_imagen: {str(e)}")
+            # Si quieres ver el error crudo como en el JS:
+            if hasattr(e, 'response'):
+                 logger.error(f"Response raw: {e.response}")
+            raise ValueError(f"Fallo generación imagen: {str(e)}")
     
     def generar_video(
         self,
