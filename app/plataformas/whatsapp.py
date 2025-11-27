@@ -1,71 +1,78 @@
 import requests
+import os
+import base64
 import logging
-import json
-from typing import Dict, Any
+import mimetypes
 
-from app.config.configuracion import obtener_configuracion
-
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 class WhatsApp:
-    
     def __init__(self):
-        config = obtener_configuracion()
-        self.token = config.WHATSAPP_TOKEN
-        self.phone_id = config.WHATSAPP_PHONE_ID
-        self.version = config.WHATSAPP_VERSION
-        self.base_url = f"https://graph.facebook.com/{self.version}"
-        self.headers = {
-            "Authorization": f"Bearer {self.token}",
-            "Content-Type": "application/json"
-        }
-
-    def enviar_contenido_generado(self, numero_destino: str, texto_ia: str) -> Dict[str, Any]:
-
-        texto_seguro = texto_ia[:1000] 
-
-        url = f"{self.base_url}/{self.phone_id}/messages"
+        self.token = os.getenv("WHAPI_TOKEN")
+        self.base_url = os.getenv("WHAPI_URL", "https://gate.whapi.cloud/")
+        # Si tienes un número de prueba o tu propio número, ponlo aquí o en el .env
+        self.contact_id = os.getenv("WHAPI_CONTACT_ID", "59176316283") # Usé el del ejemplo
         
-        # Estructura exacta para enviar variables (parameters)
-        payload = {
-            "messaging_product": "whatsapp",
-            "to": numero_destino,
-            "type": "template",
-            "template": {
-                "name": "contenido_generado",  # <--- TU PLANTILLA
-                "language": {
-                    "code": "es"  # "es" es el código estándar para Español genérico
-                },
-                "components": [
-                    {
-                        "type": "body",
-                        "parameters": [
-                            {
-                                "type": "text",
-                                "text": texto_seguro  # <--- Aquí va lo que generó la IA
-                            }
-                        ]
-                    }
-                ]
-            }
-        }
+        if not self.token:
+            logger.error("❌ No se encontró WHAPI_TOKEN")
+
+    def publicar_foto(self, archivo_binario: bytes, mensaje: str, nombre_archivo: str):
+        """
+        Publica historia replicando EXACTAMENTE el script funcional.
+        """
+        if not self.token:
+            raise Exception("Falta WHAPI_TOKEN")
+
+        base = self.base_url.strip().rstrip("/")
+        url_endpoint = f"{base}/stories/send/media"
+
+        # 1. Detectar Mime Type (Tu script usaba png, aquí detectamos el real)
+        mime_type, _ = mimetypes.guess_type(nombre_archivo)
+        if not mime_type:
+            mime_type = "image/jpeg"
 
         try:
-            logger.info(f"📱 Enviando WhatsApp a {numero_destino}...")
-            response = requests.post(url, headers=self.headers, data=json.dumps(payload))
+            # 2. Codificar Base64
+            b64_string = base64.b64encode(archivo_binario).decode("utf-8")
             
-            # Si falla (ej: 400 o 401), lanzamos error para verlo en el log
+            # 3. Construir cadena Data URI con 'name=' (Vital para Whapi)
+            media_data = f"data:{mime_type};name={nombre_archivo};base64,{b64_string}"
+            
+        except Exception as e:
+            raise Exception(f"Error codificando Base64: {e}")
+
+        # 4. Payload IDÉNTICO a tu script funcional
+        # La clave aquí es el campo 'contacts'. Sin él, da error 400.
+        payload = {
+            "media": media_data,
+            "caption": mensaje,
+            "contacts": [self.contact_id] if self.contact_id else [] 
+        }
+        
+        headers = {
+            "accept": "application/json",
+            "authorization": f"Bearer {self.token}",
+            "content-type": "application/json"
+        }
+
+        logger.info(f"🚀 Enviando a: {url_endpoint}")
+        logger.info(f"📋 Params: {mime_type} | Contactos: {payload['contacts']}")
+        
+        try:
+            response = requests.post(url_endpoint, headers=headers, json=payload, timeout=45)
+            
+            if response.status_code >= 400:
+                logger.error(f"❌ Error Whapi ({response.status_code}): {response.text}")
+                
             response.raise_for_status()
             
-            data = response.json()
-            logger.info(f" Mensaje enviado con éxito. ID: {data.get('messages', [{}])[0].get('id')}")
-            return data
-
+            result = response.json()
+            # Whapi devuelve a veces el ID o el estado 'sent'
+            msg_id = result.get('id', result.get('sent', 'Enviado'))
+            
+            logger.info(f"✅ Historia publicada: {msg_id}")
+            return str(msg_id)
+            
         except requests.exceptions.RequestException as e:
-            error_msg = f"Error enviando WhatsApp: {str(e)}"
-            if hasattr(e, 'response') and e.response is not None:
-                # Esto imprime el error exacto que devuelve Meta (muy útil para depurar)
-                logger.error(f" Detalle Error Meta: {e.response.text}")
-            else:
-                logger.error(f" {error_msg}")
-            raise ValueError(error_msg)
+            raise Exception(f"Error Whapi: {e}")

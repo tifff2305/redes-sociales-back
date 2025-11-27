@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Query
+from fastapi.responses import RedirectResponse
 from typing import Optional
 import logging
 
@@ -39,34 +40,56 @@ async def conectar_tiktok(
 
 # ==================== 2. CALLBACK (OBLIGATORIO) ====================
 # TikTok redirigirá aquí después de que el usuario acepte
+@router.get("/tiktok/login")
+async def login_tiktok(user_id: str = Query("api-user")):
+    """
+    🔗 Endpoint simple: Genera URL de login y guarda verifier
+    El usuario abre esta URL, autoriza, y el callback guarda el token
+    """
+    try:
+        from app.plataformas.tiktok import TikTok
+        from app.repositorios.tokens import GestorTokens
+        
+        tiktok = TikTok()
+        
+        # Generar URL y verifier
+        auth_url, verifier = tiktok.obtener_url_oauth_con_verifier(user_id)
+        
+        # Guardar verifier
+        GestorTokens.guardar_verifier(user_id, "tiktok", verifier)
+        
+        return {
+            "auth_url": auth_url,
+            "mensaje": "Abre esta URL para autorizar TikTok"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.get("/tiktok/callback")
 async def callback_tiktok(
-    code: str = Query(..., description="Código de autorización"),
-    state: str = Query(None, description="User ID devuelto por TikTok")
+    code: str = Query(...),
+    state: str = Query(None)
 ):
+    """
+    Callback automático de TikTok (guarda el token)
+    """
     try:
-        # El 'state' es el user_id que enviamos al principio
+        from app.plataformas.tiktok import TikTok
+        from app.repositorios.tokens import GestorTokens
+        
         user_id = state or "api-user"
-        tiktok_service = TikTok()
+        tiktok = TikTok()
         
-        # 1. Recuperar el verifier que guardamos antes
+        # Recuperar verifier
         verifier_data = GestorTokens.obtener_verifier(user_id, "tiktok")
-        
         if not verifier_data:
-            raise HTTPException(
-                status_code=400,
-                detail="Error de seguridad: No se encontró el 'verifier'. Intenta conectar de nuevo."
-            )
+            raise HTTPException(status_code=400, detail="Error: verifier no encontrado")
         
-        verifier = verifier_data['verifier']
+        # Canjear código por token
+        token_data = tiktok.intercambiar_codigo_por_token(code, verifier_data['verifier'])
         
-        # 2. Canjear el código por el Token Real
-        token_data = tiktok_service.intercambiar_codigo_por_token(code, verifier)
-        
-        if not token_data.get("access_token"):
-            raise HTTPException(status_code=500, detail="TikTok no devolvió un token válido")
-        
-        # 3. Guardar el Token para siempre (bueno, hasta que expire)
+        # GUARDAR TOKEN
         GestorTokens.guardar_token(
             user_id=user_id,
             red_social="tiktok",
@@ -76,32 +99,14 @@ async def callback_tiktok(
             metadata={"open_id": token_data.get("open_id")}
         )
         
-        # 4. Limpiar datos temporales
+        # Limpiar verifier
         GestorTokens.eliminar_verifier(user_id, "tiktok")
         
-        logger.info(f"✅ Usuario {user_id} conectado exitosamente a TikTok")
-        
-        return {
-            "success": True,
-            "mensaje": "¡TikTok conectado! Ya puedes cerrar esta ventana y publicar tu video.",
-            "user_id": user_id
-        }
+        #return {"success": True, "mensaje": "TikTok conectado! Cierra esta ventana"}
+        return RedirectResponse(url="https://localhost:4200")
         
     except Exception as e:
-        logger.error(f"Error en callback TikTok: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error al conectar: {str(e)}")
-
-
-# ==================== FACEBOOK ====================
-
-@router.get("/facebook/conectar")
-async def conectar_facebook(user_id: str = Query(...)):
-    """Inicia flujo OAuth de Facebook"""
-    # TODO: Implementar cuando tengas las credenciales
-    raise HTTPException(
-        status_code=501,
-        detail="Facebook OAuth no implementado aún"
-    )
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/facebook/callback")

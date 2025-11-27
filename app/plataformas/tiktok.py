@@ -226,3 +226,26 @@ class TikTok:
         except Exception as e:
             logger.error(f"Excepción al subir video: {str(e)}")
             return False
+        
+# AGREGAR DESPUÉS DE intercambiar_codigo_por_token() en tiktok.py
+
+    def refrescar_token(self, refresh_token: str) -> Dict[str, Any]:
+        """Refresca un token expirado"""
+        payload = {
+            "client_key": self.client_key,
+            "client_secret": self.client_secret,
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token
+        }
+        
+        response = requests.post(self.token_url, data=payload)
+        
+        if response.status_code != 200:
+            raise Exception(f"Error refrescando token: {response.text}")
+        
+        data = response.json()
+        return {
+            "access_token": data.get("access_token"),
+            "refresh_token": data.get("refresh_token"),
+            "expires_in": data.get("expires_in")
+        }

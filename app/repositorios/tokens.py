@@ -1,82 +1,121 @@
 from typing import Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
+from sqlalchemy.orm import Session
+from app.modelos.tablas import TokenRedSocial
 
 logger = logging.getLogger(__name__)
 
 class GestorTokens:
     
-    tokens_almacenados: Dict[str, Dict[str, Any]] = {}
+    # Los verifiers son temporales (duran segundos), los dejamos en memoria RAM
     verifiers_temporales: Dict[str, Dict[str, Any]] = {}
 
+    # ==========================================
+    # 1. MÉTODOS PARA VERIFIERS (Memoria)
+    # ==========================================
     @classmethod
-    def guardar_verifier(cls, user_id: str, red_social: str, verifier: str) -> None:
-        clave = f"{user_id}:{red_social}:verifier"
+    def guardar_verifier(cls, user_id: int, red_social: str, verifier: str) -> None:
+        clave = f"{user_id}:{red_social}"
         cls.verifiers_temporales[clave] = {
-            "user_id": user_id,
-            "red_social": red_social,
             "verifier": verifier,
-            "created_at": datetime.now().isoformat()
+            "created_at": datetime.now()
         }
-        logger.info(f" Verifier guardado: {user_id} - {red_social}")
+        logger.info(f"🔐 Verifier temporal guardado para: {user_id} - {red_social}")
 
     @classmethod
-    def obtener_verifier(cls, user_id: str, red_social: str) -> Optional[Dict[str, Any]]:
-        clave = f"{user_id}:{red_social}:verifier"
-        return cls.verifiers_temporales.get(clave)
+    def obtener_verifier(cls, user_id: int, red_social: str) -> Optional[str]:
+        clave = f"{user_id}:{red_social}"
+        data = cls.verifiers_temporales.get(clave)
+        if data:
+            return data.get("verifier")
+        return None
 
     @classmethod
-    def eliminar_verifier(cls, user_id: str, red_social: str) -> bool:
-        clave = f"{user_id}:{red_social}:verifier"
+    def eliminar_verifier(cls, user_id: int, red_social: str):
+        clave = f"{user_id}:{red_social}"
         if clave in cls.verifiers_temporales:
             del cls.verifiers_temporales[clave]
-            logger.info(f" Verifier eliminado: {user_id} - {red_social}")
-            return True
-        return False
 
+    # ==========================================
+    # 2. MÉTODOS PARA TOKENS (Base de Datos)
+    # ==========================================
+    
     @classmethod
     def guardar_token(
         cls,
-        user_id: str,
+        db: Session,  # <--- Nuevo parámetro obligatorio
+        user_id: int,
         red_social: str,
         access_token: str,
         refresh_token: Optional[str] = None,
-        expires_in: Optional[int] = None,
-        metadata: Optional[Dict[str, Any]] = None
+        expires_in: Optional[int] = None, # Segundos de vida
     ) -> Dict[str, Any]:
         
-        clave = f"{user_id}:{red_social}"
-        
-        token_data = {
-            "user_id": user_id,
-            "red_social": red_social,
-            "access_token": access_token,
-            "refresh_token": refresh_token,
-            "expires_in": expires_in,
-            "created_at": datetime.now().isoformat(),
-            "metadata": metadata or {}
+        # 1. Calcular fecha de expiración si nos dan segundos
+        fecha_exp = None
+        if expires_in:
+            fecha_exp = datetime.now() + timedelta(seconds=expires_in)
+
+        # 2. Buscar si ya existe un token para este usuario y red
+        token_db = db.query(TokenRedSocial).filter_by(
+            usuario_id=user_id, 
+            red_social=red_social
+        ).first()
+
+        if token_db:
+            # --- ACTUALIZAR EXISTENTE ---
+            logger.info(f"🔄 Actualizando token existente para {red_social}...")
+            token_db.token_acceso = access_token
+            # Solo actualizamos refresh_token si viene uno nuevo (a veces las APIs no lo devuelven siempre)
+            if refresh_token:
+                token_db.token_refresh = refresh_token
+            token_db.fecha_expiracion = fecha_exp
+        else:
+            # --- CREAR NUEVO ---
+            logger.info(f"✨ Creando nuevo token para {red_social}...")
+            token_db = TokenRedSocial(
+                usuario_id=user_id,
+                red_social=red_social,
+                token_acceso=access_token,
+                token_refresh=refresh_token,
+                fecha_expiracion=fecha_exp
+            )
+            db.add(token_db)
+
+        # 3. Guardar cambios en Postgres
+        db.commit()
+        db.refresh(token_db)
+
+        # Devolvemos formato diccionario para compatibilidad
+        return {
+            "access_token": token_db.token_acceso,
+            "refresh_token": token_db.token_refresh,
+            "expires_at": token_db.fecha_expiracion
         }
-        
-        cls.tokens_almacenados[clave] = token_data
-        
-        logger.info(f" TOKEN GUARDADO: {user_id} - {red_social}")
-        logger.info(f"   Access Token: {access_token[:20]}...")
-        return token_data
 
     @classmethod
-    def obtener_token(cls, user_id: str, red_social: str) -> Optional[Dict[str, Any]]:
-        clave = f"{user_id}:{red_social}"
-        return cls.tokens_almacenados.get(clave)
+    def obtener_token(cls, db: Session, user_id: int, red_social: str) -> Optional[Dict[str, Any]]:
+        """Retorna el token en formato diccionario o None si no existe"""
+        token_db = db.query(TokenRedSocial).filter_by(
+            usuario_id=user_id, 
+            red_social=red_social
+        ).first()
+
+        if not token_db:
+            return None
+            
+        return {
+            "access_token": token_db.token_acceso,
+            "refresh_token": token_db.token_refresh,
+            "expires_at": token_db.fecha_expiracion
+        }
 
     @classmethod
-    def eliminar_token(cls, user_id: str, red_social: str) -> bool:
-        clave = f"{user_id}:{red_social}"
-        if clave in cls.tokens_almacenados:
-            del cls.tokens_almacenados[clave]
-            return True
-        return False
-
-    @classmethod
-    def usuario_tiene_token(cls, user_id: str, red_social: str) -> bool:
-        clave = f"{user_id}:{red_social}"
-        return clave in cls.tokens_almacenados
+    def usuario_tiene_token(cls, db: Session, user_id: int, red_social: str) -> bool:
+        """Verifica rápidamente si existe el registro"""
+        count = db.query(TokenRedSocial).filter_by(
+            usuario_id=user_id, 
+            red_social=red_social
+        ).count()
+        return count > 0

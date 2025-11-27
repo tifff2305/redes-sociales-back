@@ -21,18 +21,25 @@ class Configuracion:
     TIKTOK_REDIRECT_URI: str = os.getenv("TIKTOK_REDIRECT_URI")
     
     # Facebook
-    FACEBOOK_APP_ID: str = os.getenv("FACEBOOK_APP_ID")
-    FACEBOOK_APP_SECRET: str = os.getenv("FACEBOOK_APP_SECRET")
-    FACEBOOK_REDIRECT_URI: str = os.getenv("FACEBOOK_REDIRECT_URI")
+    FACEBOOK_PAGE_ID: str = os.getenv("FACEBOOK_PAGE_ID")
+    FACEBOOK_PAGE_ACCESS_TOKEN: str = os.getenv("FACEBOOK_PAGE_ACCESS_TOKEN")
     
     # Instagram (usa mismas credenciales de Facebook)
-    INSTAGRAM_APP_ID: str = os.getenv("INSTAGRAM_APP_ID", os.getenv("FACEBOOK_APP_ID"))
-    INSTAGRAM_APP_SECRET: str = os.getenv("INSTAGRAM_APP_SECRET", os.getenv("FACEBOOK_APP_SECRET"))
+    INSTAGRAM_APP_ID: str = os.getenv("INSTAGRAM_APP_ID")
+    INSTAGRAM_PAGE_ACCESS_TOKEN: str = os.getenv("INSTAGRAM_PAGE_ACCESS_TOKEN")
+
+    # LinkedIn
+    ZAPIER_LINKEDIN_WEBHOOK: str = os.getenv("ZAPIER_LINKEDIN_WEBHOOK")
+    IMGBB_API_KEY: str = os.getenv("IMGBB_API_KEY")
 
     # WhatsApp
-    WHATSAPP_TOKEN: str = os.getenv("WHATSAPP_TOKEN")
-    WHATSAPP_PHONE_ID: str = os.getenv("WHATSAPP_PHONE_ID")
-    WHATSAPP_VERSION: str = os.getenv("WHATSAPP_VERSION", "v22.0")
+    WHAPI_TOKEN: str = os.getenv("WHAPI_TOKEN")
+
+    #AWS S3
+    AWS_REGION: str = os.getenv("AWS_REGION")
+    AWS_ACCESS_KEY_ID: str = os.getenv("AWS_ACCESS_KEY_ID")
+    AWS_SECRET_ACCESS_KEY: str = os.getenv("AWS_SECRET_ACCESS_KEY")
+    AWS_S3_BUCKET_NAME: str = os.getenv("AWS_S3_BUCKET_NAME")
     
     def validar(self):
         if not self.OPENAI_API_KEY:

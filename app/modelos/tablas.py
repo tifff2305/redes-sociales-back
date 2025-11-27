@@ -1,47 +1,80 @@
-from pydantic import BaseModel, Field
-from typing import List, Dict, Any, Optional
+# app/modelos/tablas.py
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text
+from sqlalchemy.orm import relationship
+from datetime import datetime
+from app.config.bd import Base
 
-class SolicitudGenerarContenido(BaseModel):
-    """Request para generar contenido"""
-    contenido: str = Field(..., min_length=10, description="Contenido base")
-    target_networks: List[str] = Field(..., description="Redes sociales objetivo")
-    user_id: str = Field(default="api-user", description="ID del usuario")
+# ==========================================
+# 1. USUARIOS (Tabla Principal)
+# ==========================================
+class Usuario(Base):
+    __tablename__ = "usuarios"
+
+    id = Column(Integer, primary_key=True, index=True)
+    nombre = Column(String(100), nullable=False)
+    email = Column(String(255), unique=True, index=True, nullable=False)
+    contrasena_hash = Column(String(255), nullable=False)
+    fecha_registro = Column(DateTime, default=datetime.now)
+
+    # Relaciones: Un usuario tiene muchos tokens y muchos chats
+    tokens = relationship("TokenRedSocial", back_populates="usuario", cascade="all, delete-orphan")
+    chats = relationship("Chat", back_populates="usuario", cascade="all, delete-orphan")
+
+
+# ==========================================
+# 2. TOKENS (Para no pedir login a cada rato)
+# ==========================================
+class TokenRedSocial(Base):
+    __tablename__ = "tokens_redes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"))
     
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "contenido": "Lanzamos característica para gestionar trámites",
-                "target_networks": ["tiktok", "facebook"],
-                "user_id": "usuario123"
-            }
-        }
+    # "tiktok", "facebook", "instagram", "linkedin", "whatsapp"
+    red_social = Column(String(50), nullable=False) 
+    
+    token_acceso = Column(Text, nullable=False)
+    token_refresh = Column(Text, nullable=True)
+    fecha_expiracion = Column(DateTime, nullable=True)
 
-class RespuestaContenido(BaseModel):
-    """Response de contenido generado"""
-    user_id: str
-    contenido: Dict[str, Any]
+    usuario = relationship("Usuario", back_populates="tokens")
 
 
-class SolicitudPublicar(BaseModel):
-    """Request para publicar contenido"""
-    user_id: str
-    red_social: str
-    texto: Optional[str] = None
-    usar_cache: bool = True
+# ==========================================
+# 3. CHATS (La carpeta de la conversación)
+# ==========================================
+class Chat(Base):
+    __tablename__ = "chats"
+
+    id = Column(Integer, primary_key=True, index=True)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"))
+    
+    titulo = Column(String(150), default="Nuevo Chat") 
+    fecha_creacion = Column(DateTime, default=datetime.now)
+    
+    # Relación: Un chat tiene muchos mensajes
+    usuario = relationship("Usuario", back_populates="chats")
+    mensajes = relationship("Mensaje", back_populates="chat", cascade="all, delete-orphan")
 
 
-class RespuestaPublicacion(BaseModel):
-    """Response de publicación"""
-    success: bool
-    red_social: str
-    post_id: Optional[str] = None
-    publish_id: Optional[str] = None
-    message: str
+# ==========================================
+# 4. MENSAJES (El historial real tipo ChatGPT)
+# ==========================================
+class Mensaje(Base):
+    __tablename__ = "mensajes"
 
+    id = Column(Integer, primary_key=True, index=True)
+    chat_id = Column(Integer, ForeignKey("chats.id"))
+    
+    # 'user' (lo que escribiste tú) o 'assistant' (lo que respondió la IA)
+    rol = Column(String(20), nullable=False) 
+    
+    contenido = Column(Text, nullable=False) # El texto largo
+    
+    # Metadatos opcionales
+    redes_objetivo = Column(String(200), nullable=True) # "tiktok, facebook"
+    archivos_url = Column(Text, nullable=True) # Si generó imagen, guardamos la ruta
+    
+    fecha = Column(DateTime, default=datetime.now)
 
-class RespuestaOAuth(BaseModel):
-    """Response de OAuth"""
-    auth_url: Optional[str] = None
-    success: Optional[bool] = None
-    user_id: Optional[str] = None
-    mensaje: str
+    chat = relationship("Chat", back_populates="mensajes")
